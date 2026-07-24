@@ -5,54 +5,350 @@ use crate::{
 };
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt as _;
 
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(windows)]
+const WINDOWS_RUNTIME_RETRY_DELAYS: [Duration; 6] = [
+    Duration::from_millis(25),
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+];
+
 #[derive(Debug)]
 pub(crate) struct PreparedRuntime {
-    pub(crate) clash_config: ClashConfig,
+    clash_config: ClashConfig,
+    runtime: PathBuf,
+    owner_root: PathBuf,
+    may_be_in_use: bool,
+    finalized: bool,
 }
 
 pub(crate) struct StagedRuntime {
     clash_config: ClashConfig,
     staging: PathBuf,
     runtime: PathBuf,
-    backup: PathBuf,
+    owner_root: PathBuf,
+}
+
+impl PreparedRuntime {
+    pub(crate) fn clash_config(&self) -> &ClashConfig {
+        &self.clash_config
+    }
+
+    pub(crate) fn mark_starting(&mut self) {
+        self.may_be_in_use = true;
+    }
+
+    pub(crate) async fn discard_unused(mut self) -> Result<(), ServiceError> {
+        self.may_be_in_use = false;
+        match remove_runtime_directory(&self.runtime, "failed to discard prepared runtime").await {
+            Ok(()) => {
+                self.finalized = true;
+                Ok(())
+            }
+            Err(error) => Err(invalid_asset(format!(
+                "failed to discard prepared runtime {:?}: {error}; state={}",
+                self.runtime,
+                inspect_path(&self.runtime).await
+            ))),
+        }
+    }
+
+    pub(crate) async fn commit(mut self) {
+        self.finalized = true;
+        cleanup_stale_runtime_directories(&self.owner_root, &self.runtime).await;
+    }
+}
+
+impl Drop for PreparedRuntime {
+    fn drop(&mut self) {
+        if self.finalized {
+            return;
+        }
+        if self.may_be_in_use {
+            tracing::warn!(
+                runtime = ?self.runtime,
+                "Leaving uncommitted runtime generation because a core may still be using it"
+            );
+            return;
+        }
+        match std::fs::remove_dir_all(&self.runtime) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(
+                    runtime = ?self.runtime,
+                    error = %error,
+                    "Failed to discard uncommitted runtime generation"
+                );
+            }
+        }
+    }
 }
 
 impl StagedRuntime {
     pub(crate) async fn activate(self) -> Result<PreparedRuntime, ServiceError> {
-        let _ = tokio::fs::remove_dir_all(&self.backup).await;
-        let had_runtime = tokio::fs::try_exists(&self.runtime).await.unwrap_or(false);
-        if had_runtime {
-            tokio::fs::rename(&self.runtime, &self.backup)
-                .await
-                .map_err(|error| {
-                    invalid_asset(format!("failed to stage current runtime: {error}"))
-                })?;
-        }
-        if let Err(error) = tokio::fs::rename(&self.staging, &self.runtime).await {
-            if had_runtime {
-                let _ = tokio::fs::rename(&self.backup, &self.runtime).await;
+        if let Err(error) = rename_runtime_directory(
+            &self.staging,
+            &self.runtime,
+            "failed to publish prepared runtime generation",
+        )
+        .await
+        {
+            let mut diagnostics = self.path_diagnostics().await;
+            if let Err(cleanup_error) = remove_runtime_directory(
+                &self.staging,
+                "failed to clean runtime staging after publish failure",
+            )
+            .await
+            {
+                diagnostics.push_str(&format!(
+                    "; staging_cleanup_error={cleanup_error}; staging_state={}",
+                    inspect_path(&self.staging).await
+                ));
             }
+            tracing::warn!(
+                error = %error,
+                paths = %diagnostics,
+                "Failed to publish prepared runtime generation"
+            );
             return Err(invalid_asset(format!(
-                "failed to activate prepared runtime: {error}"
+                "failed to publish prepared runtime generation: {error}; {diagnostics}"
             )));
-        }
-        if had_runtime {
-            let _ = tokio::fs::remove_dir_all(&self.backup).await;
         }
         Ok(PreparedRuntime {
             clash_config: self.clash_config.clone(),
+            runtime: self.runtime.clone(),
+            owner_root: self.owner_root.clone(),
+            may_be_in_use: false,
+            finalized: false,
         })
     }
+
+    async fn path_diagnostics(&self) -> String {
+        let legacy_runtime = self.owner_root.join("runtime");
+        let backup = self.owner_root.join("runtime.backup");
+        format!(
+            "staging={:?} ({}), generation={:?} ({}), legacy_runtime={:?} ({}), backup={:?} ({})",
+            self.staging,
+            inspect_path(&self.staging).await,
+            self.runtime,
+            inspect_path(&self.runtime).await,
+            legacy_runtime,
+            inspect_path(&legacy_runtime).await,
+            backup,
+            inspect_path(&backup).await,
+        )
+    }
+}
+
+async fn inspect_runtime_directory(
+    path: &Path,
+    operation: &str,
+) -> std::io::Result<Option<std::fs::Metadata>> {
+    let mut retry_index = 0;
+    loop {
+        match tokio::fs::symlink_metadata(path).await {
+            Ok(metadata) => return Ok(Some(metadata)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                let Some(delay) = runtime_cleanup_retry_delay(&error, retry_index) else {
+                    return Err(error);
+                };
+                retry_index += 1;
+                tracing::warn!(
+                    path = ?path,
+                    retry = retry_index,
+                    delay_ms = delay.as_millis(),
+                    error = %error,
+                    operation,
+                    "Retrying transient Windows runtime directory inspection failure"
+                );
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+}
+
+async fn inspect_path(path: &Path) -> String {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.file_type().is_symlink() => "symlink".to_owned(),
+        Ok(metadata) if metadata.is_dir() => "directory".to_owned(),
+        Ok(metadata) if metadata.is_file() => "file".to_owned(),
+        Ok(_) => "other".to_owned(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "missing".to_owned(),
+        Err(error) => format!("inaccessible: {error}"),
+    }
+}
+
+async fn cleanup_stale_runtime_directories(owner_root: &Path, active_runtime: &Path) {
+    let mut entries = match tokio::fs::read_dir(owner_root).await {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(
+                owner_root = ?owner_root,
+                error = %error,
+                "Failed to enumerate stale runtime directories"
+            );
+            return;
+        }
+    };
+
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(error) => {
+                tracing::warn!(
+                    owner_root = ?owner_root,
+                    error = %error,
+                    "Failed while enumerating stale runtime directories"
+                );
+                break;
+            }
+        };
+        let path = entry.path();
+        if path == active_runtime {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let is_runtime_directory = name == "runtime"
+            || name == "runtime.backup"
+            || name.starts_with("runtime.generation-")
+            || name.starts_with("runtime.staging-");
+        if !is_runtime_directory {
+            continue;
+        }
+
+        if let Err(error) =
+            remove_runtime_directory(&path, "failed to remove stale runtime directory").await
+        {
+            let state = inspect_path(&path).await;
+            tracing::warn!(
+                path = ?path,
+                state = %state,
+                error = %error,
+                active_runtime = ?active_runtime,
+                "Failed to remove stale runtime directory after committing new generation"
+            );
+        }
+    }
+}
+
+async fn remove_runtime_directory(path: &Path, operation: &str) -> std::io::Result<()> {
+    let mut retry_index = 0;
+    loop {
+        match tokio::fs::remove_dir_all(path).await {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                let Some(delay) = runtime_cleanup_retry_delay(&error, retry_index) else {
+                    return Err(error);
+                };
+                retry_index += 1;
+                tracing::warn!(
+                    path = ?path,
+                    retry = retry_index,
+                    delay_ms = delay.as_millis(),
+                    error = %error,
+                    operation,
+                    "Retrying transient Windows runtime directory cleanup failure"
+                );
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+}
+
+async fn rename_runtime_directory(
+    source: &Path,
+    destination: &Path,
+    operation: &str,
+) -> std::io::Result<()> {
+    let mut retry_index = 0;
+    loop {
+        match tokio::fs::rename(source, destination).await {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                let Some(delay) = runtime_rename_retry_delay(&error, retry_index) else {
+                    return Err(error);
+                };
+                retry_index += 1;
+                tracing::warn!(
+                    source = ?source,
+                    destination = ?destination,
+                    retry = retry_index,
+                    delay_ms = delay.as_millis(),
+                    error = %error,
+                    operation,
+                    "Retrying transient Windows runtime directory rename failure"
+                );
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn runtime_rename_retry_delay(error: &std::io::Error, retry_index: usize) -> Option<Duration> {
+    use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION};
+
+    matches!(
+        error.raw_os_error(),
+        Some(code)
+            if code == ERROR_ACCESS_DENIED as i32 || code == ERROR_SHARING_VIOLATION as i32
+    )
+    .then(|| WINDOWS_RUNTIME_RETRY_DELAYS.get(retry_index).copied())
+    .flatten()
+}
+
+#[cfg(not(windows))]
+fn runtime_rename_retry_delay(_error: &std::io::Error, _retry_index: usize) -> Option<Duration> {
+    None
+}
+
+#[cfg(windows)]
+fn runtime_cleanup_retry_delay(error: &std::io::Error, retry_index: usize) -> Option<Duration> {
+    use windows_sys::Win32::Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_DELETE_PENDING, ERROR_DIR_NOT_EMPTY, ERROR_SHARING_VIOLATION,
+    };
+
+    matches!(
+        error.raw_os_error(),
+        Some(code)
+            if code == ERROR_ACCESS_DENIED as i32
+                || code == ERROR_SHARING_VIOLATION as i32
+                || code == ERROR_DIR_NOT_EMPTY as i32
+                || code == ERROR_DELETE_PENDING as i32
+    )
+    .then(|| WINDOWS_RUNTIME_RETRY_DELAYS.get(retry_index).copied())
+    .flatten()
+}
+
+#[cfg(not(windows))]
+fn runtime_cleanup_retry_delay(_error: &std::io::Error, _retry_index: usize) -> Option<Duration> {
+    None
 }
 
 impl Drop for StagedRuntime {
     fn drop(&mut self) {
-        if self.staging.exists() {
-            let _ = std::fs::remove_dir_all(&self.staging);
+        match std::fs::remove_dir_all(&self.staging) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(
+                    staging = ?self.staging,
+                    error = %error,
+                    "Failed to clean dropped runtime staging"
+                );
+            }
         }
     }
 }
@@ -71,13 +367,49 @@ pub(crate) async fn stage_runtime(
     prepare_owner_ipc_directory(owner).await?;
 
     let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let staging = owner_root.join(format!("runtime.staging-{}-{sequence}", std::process::id()));
-    let runtime = owner_paths.runtime_dir();
-    let backup = owner_root.join("runtime.backup");
-    let _ = tokio::fs::remove_dir_all(&staging).await;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let suffix = format!("{}-{timestamp}-{sequence}", std::process::id());
+    let staging = owner_root.join(format!("runtime.staging-{suffix}"));
+    let runtime = owner_root.join(format!("runtime.generation-{suffix}"));
+    if let Err(error) =
+        remove_runtime_directory(&staging, "failed to clear runtime staging directory").await
+    {
+        return Err(invalid_asset(format!(
+            "failed to clear runtime staging directory {staging:?}: {error}; state={}",
+            inspect_path(&staging).await
+        )));
+    }
+    match inspect_runtime_directory(&runtime, "runtime generation").await {
+        Ok(None) => {}
+        Ok(Some(_)) => {
+            return Err(invalid_asset(format!(
+                "runtime generation path already exists: {runtime:?}; state={}",
+                inspect_path(&runtime).await
+            )));
+        }
+        Err(error) => {
+            return Err(invalid_asset(format!(
+                "failed to inspect runtime generation path {runtime:?}: {error}; state={}",
+                inspect_path(&runtime).await
+            )));
+        }
+    }
 
     if let Err(error) = materialize_staging(owner, bundle, &core_path, &staging).await {
-        let _ = tokio::fs::remove_dir_all(&staging).await;
+        if let Err(cleanup_error) =
+            remove_runtime_directory(&staging, "failed to clean rejected runtime staging").await
+        {
+            let state = inspect_path(&staging).await;
+            tracing::warn!(
+                staging = ?staging,
+                error = %cleanup_error,
+                state = %state,
+                "Failed to clean rejected runtime staging"
+            );
+        }
         return Err(error);
     }
 
@@ -103,7 +435,7 @@ pub(crate) async fn stage_runtime(
         },
         staging,
         runtime,
-        backup,
+        owner_root: owner_root.to_path_buf(),
     })
 }
 
@@ -121,7 +453,7 @@ async fn materialize_staging(
     core_path: &Path,
     staging: &Path,
 ) -> Result<(), ServiceError> {
-    tokio::fs::create_dir_all(staging)
+    tokio::fs::create_dir(staging)
         .await
         .map_err(|error| invalid_asset(format!("failed to create runtime staging: {error}")))?;
     set_private_directory_permissions(staging).await?;
@@ -482,7 +814,7 @@ mod tests {
 
         assert_eq!(error.code, ServiceErrorCode::InvalidRuntimeAsset);
         assert_eq!(
-            std::fs::read_to_string(prepared.clash_config.core_config.config_path)?,
+            std::fs::read_to_string(&prepared.clash_config.core_config.config_path)?,
             "mode: rule\n"
         );
         std::fs::remove_dir_all(app_root)?;

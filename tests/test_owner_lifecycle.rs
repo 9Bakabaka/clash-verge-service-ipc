@@ -3,19 +3,37 @@
 mod common;
 
 use anyhow::{Context as _, Result};
+#[cfg(windows)]
+use clash_verge_service_ipc::service_paths;
 use clash_verge_service_ipc::{
-    IpcCommand, MacosProxyConfig, OwnerCredentials, OwnerSessionProof, ProxyApplyOutcome,
-    RuntimeBundle, ServiceErrorCode, ServiceStatusSnapshot, StartClashRequest, StartClashResult,
-    WriterConfig, connect, get_clash_log_snapshot as client_get_clash_log_snapshot,
-    get_clash_logs as client_get_clash_logs, get_status as client_get_status, load_active_owner,
-    load_owner_desired_state, owner_key, restore_desired_state, run_ipc_server,
-    set_system_proxy as client_set_system_proxy, start_clash as client_start_clash,
-    stop_clash as client_stop_clash, stop_ipc_server, update_writer as client_update_writer,
+    IpcCommand, OwnerCredentials, OwnerSessionProof, RuntimeBundle, ServiceErrorCode,
+    ServiceStatusSnapshot, StartClashRequest, StartClashResult, connect,
+    get_status as client_get_status, load_active_owner, load_owner_desired_state, owner_key,
+    run_ipc_server, start_clash as client_start_clash, stop_clash as client_stop_clash,
+    stop_ipc_server,
+};
+#[cfg(unix)]
+use clash_verge_service_ipc::{
+    MacosProxyConfig, ProxyApplyOutcome, WriterConfig,
+    get_clash_log_snapshot as client_get_clash_log_snapshot,
+    get_clash_logs as client_get_clash_logs, restore_desired_state,
+    set_system_proxy as client_set_system_proxy, update_writer as client_update_writer,
 };
 use serde::Deserialize;
 use serial_test::serial;
 use std::path::PathBuf;
+#[cfg(windows)]
+use std::process::{Child, Command, Stdio};
+#[cfg(windows)]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+#[cfg(windows)]
+const RUNTIME_LOCK_TARGET_ENV: &str = "SERVICE_IPC_TEST_RUNTIME_LOCK_TARGET";
+#[cfg(windows)]
+const RUNTIME_LOCK_READY_ENV: &str = "SERVICE_IPC_TEST_RUNTIME_LOCK_READY";
+#[cfg(windows)]
+static RUNTIME_LOCK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn test_bin_path(name: &str) -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -42,6 +60,34 @@ async fn wait_for_ipc() -> Result<()> {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     anyhow::bail!("IPC server did not become ready")
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "helper process launched by the Windows runtime lock lifecycle test"]
+fn windows_runtime_file_lock_holder() -> Result<()> {
+    use std::io::Read as _;
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+
+    let Some(target) = std::env::var_os(RUNTIME_LOCK_TARGET_ENV).map(PathBuf::from) else {
+        // Keep `cargo test -- --ignored` useful; the parent process supplies this
+        // variable when this test is acting as the lock-holder helper.
+        return Ok(());
+    };
+    let ready = std::env::var_os(RUNTIME_LOCK_READY_ENV)
+        .map(PathBuf::from)
+        .context("runtime lock ready path was not provided")?;
+    let _locked_file = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(&target)
+        .with_context(|| format!("failed to lock runtime file {target:?}"))?;
+
+    std::fs::write(&ready, b"ready")
+        .with_context(|| format!("failed to report runtime lock readiness at {ready:?}"))?;
+    let _ = std::io::stdin().read(&mut [0])?;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,6 +118,229 @@ async fn start_clash(
     })
 }
 
+#[cfg(windows)]
+struct RuntimeFileLockHolder {
+    child: Option<Child>,
+    ready: PathBuf,
+}
+
+#[cfg(windows)]
+impl RuntimeFileLockHolder {
+    async fn spawn(target: &std::path::Path) -> Result<Self> {
+        let sequence = RUNTIME_LOCK_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let ready = std::env::temp_dir().join(format!(
+            "service-ipc-runtime-lock-ready-{}-{sequence}",
+            std::process::id()
+        ));
+        match std::fs::remove_file(&ready) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let child = Command::new(std::env::current_exe()?)
+            .args([
+                "--ignored",
+                "--exact",
+                "windows_runtime_file_lock_holder",
+                "--nocapture",
+            ])
+            .env(RUNTIME_LOCK_TARGET_ENV, target)
+            .env(RUNTIME_LOCK_READY_ENV, &ready)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .context("failed to spawn runtime file lock holder")?;
+        let mut holder = Self {
+            child: Some(child),
+            ready,
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if holder.ready.is_file() {
+                std::fs::remove_file(&holder.ready)?;
+                return Ok(holder);
+            }
+            if let Some(status) = holder
+                .child
+                .as_mut()
+                .context("runtime file lock holder is missing")?
+                .try_wait()?
+            {
+                anyhow::bail!(
+                    "runtime file lock holder exited with {status} before reporting ready"
+                );
+            }
+            if Instant::now() >= deadline {
+                anyhow::bail!("runtime file lock holder did not report ready within 5 seconds");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    async fn release(mut self) -> Result<()> {
+        let stdin = self
+            .child
+            .as_mut()
+            .context("runtime file lock holder is missing")?
+            .stdin
+            .take()
+            .context("runtime file lock holder stdin is missing")?;
+        drop(stdin);
+        self.wait_for_exit().await
+    }
+
+    async fn wait_for_exit(&mut self) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let child = self
+                .child
+                .as_mut()
+                .context("runtime file lock holder was already released")?;
+            if let Some(status) = child.try_wait()? {
+                self.child.take();
+                anyhow::ensure!(
+                    status.success(),
+                    "runtime file lock holder failed with {status}"
+                );
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                anyhow::bail!("runtime file lock holder did not exit within 5 seconds");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for RuntimeFileLockHolder {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let _ = std::fs::remove_file(&self.ready);
+    }
+}
+
+#[cfg(windows)]
+async fn start_clash_after_lock_release(
+    credentials: &OwnerCredentials,
+    runtime: &RuntimeBundle,
+    proposed_session_token: &str,
+    locked_file: &std::path::Path,
+) -> Result<WireResponse<StartClashResult>> {
+    let holder = RuntimeFileLockHolder::spawn(locked_file).await?;
+    let restart = start_clash_ok(credentials, runtime, proposed_session_token);
+    tokio::pin!(restart);
+    if let Ok(result) = tokio::time::timeout(Duration::from_millis(500), &mut restart).await {
+        let response = result?;
+        anyhow::bail!(
+            "Start completed while the runtime file lock was still held: code={}, message={}",
+            response.code,
+            response.message
+        );
+    }
+    holder.release().await?;
+    tokio::time::timeout(Duration::from_secs(5), &mut restart)
+        .await
+        .context("Start did not finish after the runtime file lock was released")?
+}
+
+#[cfg(windows)]
+fn windows_runtime_bundle(yaml: &str) -> Result<RuntimeBundle> {
+    let mock_binary = test_bin_path("mock_binary");
+    anyhow::ensure!(
+        mock_binary.exists(),
+        "missing mock_binary at {mock_binary:?}"
+    );
+    Ok(RuntimeBundle {
+        yaml: yaml.to_owned(),
+        assets: vec![],
+        core_path: mock_binary.to_string_lossy().into_owned(),
+    })
+}
+
+#[cfg(windows)]
+async fn start_clash_ok(
+    credentials: &OwnerCredentials,
+    runtime: &RuntimeBundle,
+    proposed_session_token: &str,
+) -> Result<WireResponse<StartClashResult>> {
+    let response = start_clash(credentials, runtime, proposed_session_token).await?;
+    anyhow::ensure!(response.code == 0, "{}", response.message);
+    Ok(response)
+}
+
+#[cfg(windows)]
+async fn active_runtime_config_path(credentials: &OwnerCredentials) -> Result<PathBuf> {
+    let key = owner_key(&credentials.identity);
+    let desired = load_owner_desired_state(&key).await?;
+    desired
+        .last_clash_config
+        .map(|config| PathBuf::from(config.core_config.config_path))
+        .context("active owner desired state omitted ClashConfig")
+}
+
+#[cfg(windows)]
+async fn assert_new_runtime_config(
+    credentials: &OwnerCredentials,
+    previous: &std::path::Path,
+    expected_yaml: &str,
+) -> Result<PathBuf> {
+    let current = active_runtime_config_path(credentials).await?;
+    anyhow::ensure!(
+        current != previous,
+        "same-owner Start reused runtime generation {previous:?}"
+    );
+    anyhow::ensure!(
+        std::fs::read_to_string(&current)? == expected_yaml,
+        "active runtime config at {current:?} was not replaced"
+    );
+    Ok(current)
+}
+
+#[cfg(windows)]
+async fn with_windows_ipc_server(
+    test: impl std::future::Future<Output = Result<()>>,
+) -> Result<()> {
+    common::init_tracing_for_tests();
+    let _ = stop_ipc_server().await;
+    let mut server_handle = run_ipc_server().await?;
+    let test_result = async {
+        wait_for_ipc().await?;
+        test.await
+    }
+    .await;
+
+    let stop_result: Result<()> =
+        match tokio::time::timeout(Duration::from_secs(5), stop_ipc_server()).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(error.into()),
+            Err(_) => Err(anyhow::anyhow!(
+                "IPC server shutdown did not finish within 5 seconds"
+            )),
+        };
+    let server_result: Result<()> =
+        match tokio::time::timeout(Duration::from_secs(5), &mut server_handle).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(error))) => Err(error.into()),
+            Ok(Err(error)) => Err(error.into()),
+            Err(_) => {
+                server_handle.abort();
+                let _ = server_handle.await;
+                Err(anyhow::anyhow!(
+                    "IPC server task did not stop within 5 seconds"
+                ))
+            }
+        };
+
+    test_result?;
+    stop_result?;
+    server_result
+}
+
 fn session_from_start(
     response: &WireResponse<StartClashResult>,
     token: &str,
@@ -96,6 +365,7 @@ async fn get_status(credentials: &OwnerCredentials) -> Result<WireResponse<Servi
     })
 }
 
+#[cfg(unix)]
 async fn get_clash_logs(credentials: &OwnerCredentials) -> Result<WireResponse<Vec<String>>> {
     let response = client_get_clash_logs(credentials).await?;
     Ok(WireResponse {
@@ -107,6 +377,7 @@ async fn get_clash_logs(credentials: &OwnerCredentials) -> Result<WireResponse<V
     })
 }
 
+#[cfg(unix)]
 async fn get_clash_log_snapshot(credentials: &OwnerCredentials) -> Result<WireResponse<String>> {
     let response = client_get_clash_log_snapshot(credentials).await?;
     Ok(WireResponse {
@@ -128,6 +399,7 @@ async fn stop_clash(
     })
 }
 
+#[cfg(unix)]
 async fn update_writer(
     credentials: &OwnerCredentials,
     session: &OwnerSessionProof,
@@ -141,6 +413,7 @@ async fn update_writer(
     })
 }
 
+#[cfg(unix)]
 async fn set_system_proxy(
     credentials: &OwnerCredentials,
     session: &OwnerSessionProof,
@@ -325,6 +598,106 @@ async fn same_owner_restart_concurrent_start_and_failed_update_remain_atomic() -
     stop_ipc_server().await?;
     server_handle.await??;
     Ok(())
+}
+
+#[cfg(windows)]
+#[tokio::test]
+#[serial]
+async fn windows_same_owner_restart_waits_for_runtime_handle_release() -> Result<()> {
+    with_windows_ipc_server(async {
+        let credentials = common::owner_credentials();
+        let mut bundle = windows_runtime_bundle("mode: rule\n")?;
+
+        let first_token = "a1".repeat(32);
+        start_clash_ok(&credentials, &bundle, &first_token).await?;
+        let owner_paths = service_paths().for_owner(&credentials.identity);
+        let runtime_file = active_runtime_config_path(&credentials).await?;
+        anyhow::ensure!(
+            runtime_file.is_file(),
+            "active runtime config is missing at {runtime_file:?}"
+        );
+
+        bundle.yaml = "mode: direct\n".to_owned();
+        let restart_token = "a2".repeat(32);
+        start_clash_after_lock_release(&credentials, &bundle, &restart_token, &runtime_file)
+            .await?;
+        let restarted_runtime_file =
+            assert_new_runtime_config(&credentials, &runtime_file, "mode: direct\n").await?;
+        anyhow::ensure!(
+            !runtime_file.exists(),
+            "previous runtime generation was not cleaned after handle release"
+        );
+
+        let backup = owner_paths.root().join("runtime.backup");
+        std::fs::create_dir(&backup)?;
+        let stale_backup_file = backup.join("stale.lock");
+        std::fs::write(&stale_backup_file, b"stale")?;
+        bundle.yaml = "mode: global\n".to_owned();
+        let cleanup_token = "a3".repeat(32);
+        let cleanup_restart = start_clash_after_lock_release(
+            &credentials,
+            &bundle,
+            &cleanup_token,
+            &stale_backup_file,
+        )
+        .await?;
+        anyhow::ensure!(!backup.exists(), "stale runtime backup was not removed");
+        assert_new_runtime_config(&credentials, &restarted_runtime_file, "mode: global\n").await?;
+
+        let cleanup_session = session_from_start(&cleanup_restart, &cleanup_token)?;
+        anyhow::ensure!(
+            stop_clash(&credentials, &cleanup_session).await?.code == 0,
+            "failed to stop restarted core"
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[cfg(windows)]
+#[tokio::test]
+#[serial]
+async fn windows_generation_restart_survives_lock_beyond_retry_window() -> Result<()> {
+    with_windows_ipc_server(async {
+        let credentials = common::owner_credentials();
+        let mut bundle = windows_runtime_bundle("mode: rule\n")?;
+        start_clash_ok(&credentials, &bundle, &"b1".repeat(32)).await?;
+        let locked_runtime = active_runtime_config_path(&credentials).await?;
+        let holder = RuntimeFileLockHolder::spawn(&locked_runtime).await?;
+
+        bundle.yaml = "mode: direct\n".to_owned();
+        let restart_token = "b2".repeat(32);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            start_clash_ok(&credentials, &bundle, &restart_token),
+        )
+        .await
+        .context("Start did not commit a new generation while the old runtime remained locked")??;
+        let restarted_runtime =
+            assert_new_runtime_config(&credentials, &locked_runtime, "mode: direct\n").await?;
+        anyhow::ensure!(
+            locked_runtime.exists(),
+            "long-locked stale generation was removed while its handle was still held"
+        );
+        holder.release().await?;
+
+        bundle.yaml = "mode: global\n".to_owned();
+        let cleanup_token = "b3".repeat(32);
+        let cleanup_restart = start_clash_ok(&credentials, &bundle, &cleanup_token).await?;
+        anyhow::ensure!(
+            !locked_runtime.exists(),
+            "released stale runtime generation was not cleaned on the next commit"
+        );
+        assert_new_runtime_config(&credentials, &restarted_runtime, "mode: global\n").await?;
+
+        let cleanup_session = session_from_start(&cleanup_restart, &cleanup_token)?;
+        anyhow::ensure!(
+            stop_clash(&credentials, &cleanup_session).await?.code == 0,
+            "failed to stop core after long-lock restart"
+        );
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(unix)]

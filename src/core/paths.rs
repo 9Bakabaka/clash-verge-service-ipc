@@ -242,9 +242,14 @@ pub fn mihomo_ipc_path(identity: &OwnerIdentity) -> String {
         OwnerIdentity::Unix { uid: _uid, .. } => {
             #[cfg(windows)]
             {
+                let channel_id = if cfg!(feature = "test") {
+                    "test"
+                } else {
+                    crate::CHANNEL_IDENTITY.id
+                };
                 format!(
                     r"\\.\pipe\verge-mihomo-{}-{}",
-                    crate::CHANNEL_IDENTITY.id,
+                    channel_id,
                     owner_key(identity)
                 )
             }
@@ -262,9 +267,14 @@ pub fn mihomo_ipc_path(identity: &OwnerIdentity) -> String {
             }
         }
         OwnerIdentity::Windows { .. } => {
+            let channel_id = if cfg!(feature = "test") {
+                "test"
+            } else {
+                crate::CHANNEL_IDENTITY.id
+            };
             format!(
                 r"\\.\pipe\verge-mihomo-{}-{}",
-                crate::CHANNEL_IDENTITY.id,
+                channel_id,
                 owner_key(identity)
             )
         }
@@ -308,5 +318,16 @@ mod tests {
             paths.active_owner_path(),
             paths.persistent_state_dir().join("active-owner.json")
         );
+    }
+
+    #[cfg(all(windows, feature = "test"))]
+    #[test]
+    fn windows_test_mihomo_pipe_does_not_use_a_production_namespace() {
+        let path = super::mihomo_ipc_path(&OwnerIdentity::Windows {
+            sid: "S-1-5-21-1-2-3-1001".to_owned(),
+        });
+
+        assert!(path.starts_with(r"\\.\pipe\verge-mihomo-test-"));
+        assert!(!path.contains("verge-mihomo-production"));
     }
 }
