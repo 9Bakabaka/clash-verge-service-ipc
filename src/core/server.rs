@@ -1,5 +1,5 @@
 use super::state::IpcState;
-use crate::core::assets::{PreparedRuntime, StagedRuntime, stage_runtime};
+use crate::core::assets::{PreparedRuntime, prepare_runtime};
 use crate::core::auth::{
     AuthenticatedOwner, ServiceError, authenticate_owner, hash_session_token,
     ipc_request_context_to_auth_context,
@@ -49,8 +49,6 @@ const WINDOWS_CONTROL_PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x001201
 const WINDOWS_TEST_CONTROL_PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;AU)";
 
 trait OwnerProxyTransition {
-    async fn activate_new_runtime(&mut self) -> AnyResult<()>;
-    async fn discard_new_runtime(&mut self) -> AnyResult<()>;
     async fn clear_previous_proxy(&mut self) -> AnyResult<()>;
     async fn compensate_direct(&mut self) -> AnyResult<()>;
     async fn stop_previous_core(&mut self) -> AnyResult<()>;
@@ -62,38 +60,21 @@ trait OwnerProxyTransition {
 async fn owner_proxy_transition(
     transition: &mut impl OwnerProxyTransition,
 ) -> std::result::Result<(ActiveOwnerState, crate::ProxyApplyOutcome), ServiceError> {
-    transition.activate_new_runtime().await.map_err(|error| {
-        ServiceError::owner_switch_failed(format!(
-            "Failed to activate prepared owner runtime: {error:#}"
-        ))
-    })?;
-
     if let Err(clear_error) = transition.clear_previous_proxy().await {
         let compensation = transition.compensate_direct().await;
-        let discard = transition.discard_new_runtime().await;
-        let mut message = match compensation {
+        let message = match compensation {
             Ok(()) => format!("Failed to clear the previous owner's proxy: {clear_error:#}"),
             Err(compensation_error) => format!(
                 "Failed to clear the previous owner's proxy: {clear_error:#}; direct compensation failed: {compensation_error:#}"
             ),
         };
-        if let Err(discard_error) = discard {
-            message.push_str(&format!(
-                "; failed to discard unused runtime generation: {discard_error:#}"
-            ));
-        }
         return Err(ServiceError::proxy_clear_failed(message));
     }
 
     if let Err(stop_error) = transition.stop_previous_core().await {
-        let discard = transition.discard_new_runtime().await;
-        let mut message = format!("Failed to stop the previous owner core: {stop_error:#}");
-        if let Err(discard_error) = discard {
-            message.push_str(&format!(
-                "; failed to discard unused runtime generation: {discard_error:#}"
-            ));
-        }
-        return Err(ServiceError::owner_switch_failed(message));
+        return Err(ServiceError::owner_switch_failed(format!(
+            "Failed to stop the previous owner core: {stop_error:#}"
+        )));
     }
     transition.start_new_core().await.map_err(|error| {
         ServiceError::owner_switch_failed(format!("Failed to start owner core: {error:#}"))
@@ -110,7 +91,6 @@ async fn owner_proxy_transition(
 struct StartOwnerTransition<'a> {
     previous_owner: Option<ActiveOwnerState>,
     owner: &'a AuthenticatedOwner,
-    staged_runtime: Option<StagedRuntime>,
     prepared_runtime: Option<PreparedRuntime>,
     proposed_session_token: &'a str,
     macos_proxy: Option<&'a MacosProxyConfig>,
@@ -123,29 +103,6 @@ impl OwnerProxyTransition for StartOwnerTransition<'_> {
 
     async fn compensate_direct(&mut self) -> AnyResult<()> {
         compensate_service_proxy().await
-    }
-
-    async fn activate_new_runtime(&mut self) -> AnyResult<()> {
-        let staged_runtime = self
-            .staged_runtime
-            .take()
-            .context("staged runtime was already consumed")?;
-        self.prepared_runtime = Some(
-            staged_runtime
-                .activate()
-                .await
-                .map_err(anyhow::Error::new)?,
-        );
-        Ok(())
-    }
-
-    async fn discard_new_runtime(&mut self) -> AnyResult<()> {
-        self.prepared_runtime
-            .take()
-            .context("prepared runtime is unavailable during discard")?
-            .discard_unused()
-            .await
-            .map_err(anyhow::Error::new)
     }
 
     async fn stop_previous_core(&mut self) -> AnyResult<()> {
@@ -172,7 +129,7 @@ impl OwnerProxyTransition for StartOwnerTransition<'_> {
         self.prepared_runtime
             .as_mut()
             .context("prepared runtime disappeared before core start")?
-            .mark_starting();
+            .mark_may_be_in_use();
         let start_result = core_manager
             .start_core(clash_config, self.owner.identity.clone())
             .await;
@@ -185,7 +142,7 @@ impl OwnerProxyTransition for StartOwnerTransition<'_> {
             }
             let _ = persist_owner_core_stopped(self.owner).await;
             if let Some(prepared_runtime) = self.prepared_runtime.take()
-                && let Err(cleanup_error) = prepared_runtime.discard_unused().await
+                && let Err(cleanup_error) = prepared_runtime.discard_after_core_stopped().await
             {
                 return Err(anyhow!(
                     "{error:#}; failed to discard rejected runtime generation: {cleanup_error}"
@@ -210,8 +167,7 @@ impl OwnerProxyTransition for StartOwnerTransition<'_> {
                 self.prepared_runtime
                     .take()
                     .context("prepared runtime disappeared during owner commit")?
-                    .commit()
-                    .await;
+                    .commit();
                 Ok(active)
             }
             Err(error) => self.rollback_commit_failure(error).await,
@@ -224,6 +180,21 @@ impl OwnerProxyTransition for StartOwnerTransition<'_> {
 }
 
 impl StartOwnerTransition<'_> {
+    async fn discard_unstarted_runtime(&mut self) -> AnyResult<()> {
+        let Some(prepared_runtime) = self.prepared_runtime.as_ref() else {
+            return Ok(());
+        };
+        if !prepared_runtime.is_unused() {
+            return Ok(());
+        }
+        self.prepared_runtime
+            .take()
+            .context("unused prepared runtime disappeared before discard")?
+            .discard_after_core_stopped()
+            .await
+            .map_err(anyhow::Error::new)
+    }
+
     async fn rollback_commit_failure<T>(&mut self, error: anyhow::Error) -> AnyResult<T> {
         if let Err(rollback_error) = rollback_started_owner(self.owner).await {
             return Err(anyhow!(
@@ -231,7 +202,7 @@ impl StartOwnerTransition<'_> {
             ));
         }
         if let Some(prepared_runtime) = self.prepared_runtime.take()
-            && let Err(cleanup_error) = prepared_runtime.discard_unused().await
+            && let Err(cleanup_error) = prepared_runtime.discard_after_core_stopped().await
         {
             return Err(anyhow!(
                 "{error:#}; failed to discard uncommitted runtime generation: {cleanup_error}"
@@ -662,27 +633,33 @@ fn create_ipc_router() -> Result<Router> {
             #[cfg(feature = "test")]
             test_proxy_barrier_note_start_waiting();
             let _lifecycle_guard = OWNER_LIFECYCLE_LOCK.lock().await;
-            let staged_runtime = match stage_runtime(&owner, &start_request.runtime).await {
-                Ok(staged) => staged,
-                Err(error) => return service_error(error),
-            };
             let previous_owner = match load_active_owner().await {
                 Ok(owner) => owner,
                 Err(error) => {
                     return service_unavailable(format!("Failed to load active owner: {error}"));
                 }
             };
+            let prepared_runtime = match prepare_runtime(&owner, &start_request.runtime).await {
+                Ok(prepared) => prepared,
+                Err(error) => return service_error(error),
+            };
             let mut transition = StartOwnerTransition {
                 previous_owner,
                 owner: &owner,
-                staged_runtime: Some(staged_runtime),
-                prepared_runtime: None,
+                prepared_runtime: Some(prepared_runtime),
                 proposed_session_token: &start_request.proposed_session_token,
                 macos_proxy: start_request.macos_proxy.as_ref(),
             };
             let (active, proxy_outcome) = match owner_proxy_transition(&mut transition).await {
                 Ok(result) => result,
-                Err(error) => return service_error(error),
+                Err(mut error) => {
+                    if let Err(cleanup_error) = transition.discard_unstarted_runtime().await {
+                        error.message.push_str(&format!(
+                            "; failed to discard unused runtime generation: {cleanup_error:#}"
+                        ));
+                    }
+                    return service_error(error);
+                }
             };
             if let Err(error) = cleanup_legacy_owner_files(&owner).await {
                 warn!(
@@ -1091,7 +1068,6 @@ mod owner_lifecycle_tests {
         running_pid: u32,
         next_owner: ActiveOwnerState,
         clear_fails: bool,
-        activate_fails: bool,
         stop_fails: bool,
         apply_falls_back: bool,
     }
@@ -1107,19 +1083,6 @@ mod owner_lifecycle_tests {
 
         async fn compensate_direct(&mut self) -> anyhow::Result<()> {
             self.events.push("compensate_direct");
-            Ok(())
-        }
-
-        async fn activate_new_runtime(&mut self) -> anyhow::Result<()> {
-            self.events.push("activate_b");
-            if self.activate_fails {
-                anyhow::bail!("activation failed");
-            }
-            Ok(())
-        }
-
-        async fn discard_new_runtime(&mut self) -> anyhow::Result<()> {
-            self.events.push("discard_b");
             Ok(())
         }
 
@@ -1163,7 +1126,6 @@ mod owner_lifecycle_tests {
             running_pid: 101,
             next_owner: ActiveOwnerState::from(&owner(96_002)),
             clear_fails: false,
-            activate_fails: false,
             stop_fails: false,
             apply_falls_back: false,
         }
@@ -1177,14 +1139,7 @@ mod owner_lifecycle_tests {
 
         assert_eq!(
             transition.events,
-            [
-                "activate_b",
-                "clear_proxy",
-                "stop_a",
-                "start_b",
-                "commit_b",
-                "apply_b"
-            ]
+            ["clear_proxy", "stop_a", "start_b", "commit_b", "apply_b"]
         );
         assert_eq!(transition.active_owner.owner_key, "96002");
         assert_eq!(transition.running_pid, 202);
@@ -1202,36 +1157,13 @@ mod owner_lifecycle_tests {
             .expect_err("proxy clear failure must abort takeover");
 
         assert_eq!(error.code, ServiceErrorCode::ProxyClearFailed);
-        assert_eq!(
-            transition.events,
-            [
-                "activate_b",
-                "clear_proxy",
-                "compensate_direct",
-                "discard_b"
-            ]
-        );
+        assert_eq!(transition.events, ["clear_proxy", "compensate_direct"]);
         assert_eq!(transition.active_owner.owner_key, "96001");
         assert_eq!(transition.running_pid, 101);
     }
 
     #[tokio::test]
-    async fn owner_proxy_transition_runtime_failure_preserves_old_owner_and_core() {
-        let mut transition = recording_transition();
-        transition.activate_fails = true;
-
-        let error = owner_proxy_transition(&mut transition)
-            .await
-            .expect_err("runtime activation failure must abort takeover");
-
-        assert_eq!(error.code, ServiceErrorCode::OwnerSwitchFailed);
-        assert_eq!(transition.events, ["activate_b"]);
-        assert_eq!(transition.active_owner.owner_key, "96001");
-        assert_eq!(transition.running_pid, 101);
-    }
-
-    #[tokio::test]
-    async fn owner_proxy_transition_stop_failure_discards_unused_runtime() {
+    async fn owner_proxy_transition_stop_failure_preserves_old_owner() {
         let mut transition = recording_transition();
         transition.stop_fails = true;
 
@@ -1240,10 +1172,7 @@ mod owner_lifecycle_tests {
             .expect_err("core stop failure must abort takeover");
 
         assert_eq!(error.code, ServiceErrorCode::OwnerSwitchFailed);
-        assert_eq!(
-            transition.events,
-            ["activate_b", "clear_proxy", "stop_a", "discard_b"]
-        );
+        assert_eq!(transition.events, ["clear_proxy", "stop_a"]);
         assert_eq!(transition.active_owner.owner_key, "96001");
         assert_eq!(transition.running_pid, 101);
     }

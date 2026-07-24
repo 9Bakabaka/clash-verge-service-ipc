@@ -225,27 +225,39 @@ impl Drop for RuntimeFileLockHolder {
 }
 
 #[cfg(windows)]
-async fn start_clash_after_lock_release(
+async fn start_clash_while_runtime_file_is_locked(
     credentials: &OwnerCredentials,
     runtime: &RuntimeBundle,
     proposed_session_token: &str,
     locked_file: &std::path::Path,
-) -> Result<WireResponse<StartClashResult>> {
+) -> Result<(WireResponse<StartClashResult>, RuntimeFileLockHolder)> {
     let holder = RuntimeFileLockHolder::spawn(locked_file).await?;
-    let restart = start_clash_ok(credentials, runtime, proposed_session_token);
-    tokio::pin!(restart);
-    if let Ok(result) = tokio::time::timeout(Duration::from_millis(500), &mut restart).await {
-        let response = result?;
-        anyhow::bail!(
-            "Start completed while the runtime file lock was still held: code={}, message={}",
-            response.code,
-            response.message
-        );
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        start_clash_ok(credentials, runtime, proposed_session_token),
+    )
+    .await
+    .context("Start waited for the stale runtime file lock to be released")??;
+    Ok((response, holder))
+}
+
+#[cfg(windows)]
+async fn wait_for_path_removal(path: &std::path::Path) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match tokio::fs::symlink_metadata(path).await {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Ok(_) => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to inspect stale runtime path {path:?}"));
+            }
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("stale runtime path was not removed within 5 seconds: {path:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    holder.release().await?;
-    tokio::time::timeout(Duration::from_secs(5), &mut restart)
-        .await
-        .context("Start did not finish after the runtime file lock was released")?
 }
 
 #[cfg(windows)]
@@ -603,7 +615,7 @@ async fn same_owner_restart_concurrent_start_and_failed_update_remain_atomic() -
 #[cfg(windows)]
 #[tokio::test]
 #[serial]
-async fn windows_same_owner_restart_waits_for_runtime_handle_release() -> Result<()> {
+async fn windows_restart_does_not_wait_for_locked_stale_runtime_cleanup() -> Result<()> {
     with_windows_ipc_server(async {
         let credentials = common::owner_credentials();
         let mut bundle = windows_runtime_bundle("mode: rule\n")?;
@@ -619,14 +631,24 @@ async fn windows_same_owner_restart_waits_for_runtime_handle_release() -> Result
 
         bundle.yaml = "mode: direct\n".to_owned();
         let restart_token = "a2".repeat(32);
-        start_clash_after_lock_release(&credentials, &bundle, &restart_token, &runtime_file)
-            .await?;
+        let (_, holder) = start_clash_while_runtime_file_is_locked(
+            &credentials,
+            &bundle,
+            &restart_token,
+            &runtime_file,
+        )
+        .await?;
         let restarted_runtime_file =
             assert_new_runtime_config(&credentials, &runtime_file, "mode: direct\n").await?;
-        anyhow::ensure!(
-            !runtime_file.exists(),
-            "previous runtime generation was not cleaned after handle release"
-        );
+        let previous_runtime = runtime_file
+            .parent()
+            .context("runtime config has no parent directory")?
+            .to_path_buf();
+        tokio::fs::symlink_metadata(&previous_runtime)
+            .await
+            .context("locked runtime generation disappeared before handle release")?;
+        holder.release().await?;
+        wait_for_path_removal(&previous_runtime).await?;
 
         let backup = owner_paths.root().join("runtime.backup");
         std::fs::create_dir(&backup)?;
@@ -634,66 +656,24 @@ async fn windows_same_owner_restart_waits_for_runtime_handle_release() -> Result
         std::fs::write(&stale_backup_file, b"stale")?;
         bundle.yaml = "mode: global\n".to_owned();
         let cleanup_token = "a3".repeat(32);
-        let cleanup_restart = start_clash_after_lock_release(
+        let (cleanup_restart, holder) = start_clash_while_runtime_file_is_locked(
             &credentials,
             &bundle,
             &cleanup_token,
             &stale_backup_file,
         )
         .await?;
-        anyhow::ensure!(!backup.exists(), "stale runtime backup was not removed");
         assert_new_runtime_config(&credentials, &restarted_runtime_file, "mode: global\n").await?;
+        tokio::fs::symlink_metadata(&backup)
+            .await
+            .context("locked runtime backup disappeared before handle release")?;
+        holder.release().await?;
+        wait_for_path_removal(&backup).await?;
 
         let cleanup_session = session_from_start(&cleanup_restart, &cleanup_token)?;
         anyhow::ensure!(
             stop_clash(&credentials, &cleanup_session).await?.code == 0,
             "failed to stop restarted core"
-        );
-        Ok(())
-    })
-    .await
-}
-
-#[cfg(windows)]
-#[tokio::test]
-#[serial]
-async fn windows_generation_restart_survives_lock_beyond_retry_window() -> Result<()> {
-    with_windows_ipc_server(async {
-        let credentials = common::owner_credentials();
-        let mut bundle = windows_runtime_bundle("mode: rule\n")?;
-        start_clash_ok(&credentials, &bundle, &"b1".repeat(32)).await?;
-        let locked_runtime = active_runtime_config_path(&credentials).await?;
-        let holder = RuntimeFileLockHolder::spawn(&locked_runtime).await?;
-
-        bundle.yaml = "mode: direct\n".to_owned();
-        let restart_token = "b2".repeat(32);
-        tokio::time::timeout(
-            Duration::from_secs(5),
-            start_clash_ok(&credentials, &bundle, &restart_token),
-        )
-        .await
-        .context("Start did not commit a new generation while the old runtime remained locked")??;
-        let restarted_runtime =
-            assert_new_runtime_config(&credentials, &locked_runtime, "mode: direct\n").await?;
-        anyhow::ensure!(
-            locked_runtime.exists(),
-            "long-locked stale generation was removed while its handle was still held"
-        );
-        holder.release().await?;
-
-        bundle.yaml = "mode: global\n".to_owned();
-        let cleanup_token = "b3".repeat(32);
-        let cleanup_restart = start_clash_ok(&credentials, &bundle, &cleanup_token).await?;
-        anyhow::ensure!(
-            !locked_runtime.exists(),
-            "released stale runtime generation was not cleaned on the next commit"
-        );
-        assert_new_runtime_config(&credentials, &restarted_runtime, "mode: global\n").await?;
-
-        let cleanup_session = session_from_start(&cleanup_restart, &cleanup_token)?;
-        anyhow::ensure!(
-            stop_clash(&credentials, &cleanup_session).await?.code == 0,
-            "failed to stop core after long-lock restart"
         );
         Ok(())
     })
