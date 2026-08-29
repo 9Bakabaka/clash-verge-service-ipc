@@ -65,16 +65,13 @@ fn remove_ordinary_file_if_exists(path: &Path) -> Result<(), Error> {
 }
 
 fn stage_service_binary(source: &Path, target: &Path) -> Result<PathBuf, Error> {
-    let parent = target
-        .parent()
-        .context("protected service target has no parent")?;
+    let parent = target.parent().context("protected service target has no parent")?;
     std::fs::create_dir_all(parent)
         .with_context(|| format!("failed to create protected service directory {parent:?}"))?;
     let staged = target.with_extension(if cfg!(windows) { "exe.next" } else { "next" });
     remove_ordinary_file_if_exists(&staged)?;
 
-    let mut source_file = File::open(source)
-        .with_context(|| format!("failed to open service candidate {source:?}"))?;
+    let mut source_file = File::open(source).with_context(|| format!("failed to open service candidate {source:?}"))?;
     let mut staged_file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -122,9 +119,7 @@ fn publish_staged_binary(staged: &Path, target: &Path) -> Result<(), Error> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt as _;
-        use windows_sys::Win32::Storage::FileSystem::{
-            MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-        };
+        use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW};
 
         let wide = |path: &Path| {
             let mut value: Vec<u16> = path.as_os_str().encode_wide().collect();
@@ -141,9 +136,8 @@ fn publish_staged_binary(staged: &Path, target: &Path) -> Result<(), Error> {
             )
         } == 0
         {
-            return Err(std::io::Error::last_os_error()).with_context(|| {
-                format!("failed to publish service binary {staged:?} at {target:?}")
-            });
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("failed to publish service binary {staged:?} at {target:?}"));
         }
         Ok(())
     }
@@ -205,15 +199,10 @@ enum LaunchdInstallPlan {
 }
 
 #[cfg(any(target_os = "macos", test))]
-fn classify_launchd_service_probe(
-    exit_code: Option<i32>,
-    diagnostic: &str,
-) -> Result<LaunchdInstallPlan, Error> {
+fn classify_launchd_service_probe(exit_code: Option<i32>, diagnostic: &str) -> Result<LaunchdInstallPlan, Error> {
     match exit_code {
         Some(0) => Ok(LaunchdInstallPlan::Bootout),
-        Some(113) if diagnostic.contains("Could not find service") => {
-            Ok(LaunchdInstallPlan::SkipBootout)
-        }
+        Some(113) if diagnostic.contains("Could not find service") => Ok(LaunchdInstallPlan::SkipBootout),
         _ => Err(anyhow::anyhow!(
             "Unexpected launchctl service probe result (exit code: {:?}): {}",
             exit_code,
@@ -276,8 +265,7 @@ fn resolve_service_group_name() -> Result<String, Error> {
 fn set_macos_owner(path: &Path) -> Result<(), Error> {
     use std::os::unix::fs::lchown;
 
-    lchown(path, Some(0), Some(0))
-        .with_context(|| format!("failed to set root:wheel owner on {path:?}"))
+    lchown(path, Some(0), Some(0)).with_context(|| format!("failed to set root:wheel owner on {path:?}"))
 }
 
 #[cfg(target_os = "macos")]
@@ -310,15 +298,12 @@ fn main() -> Result<(), Error> {
     let launchd_install_plan = probe_launchd_service(debug)?;
     let service_binary_path = bundled_service_binary()?;
 
-    let bundle_path = PathBuf::from("/Library/PrivilegedHelperTools").join(format!(
-        "{}.bundle",
-        clash_verge_service_ipc::MACOS_SERVICE_ID
-    ));
+    let bundle_path = PathBuf::from("/Library/PrivilegedHelperTools")
+        .join(format!("{}.bundle", clash_verge_service_ipc::MACOS_SERVICE_ID));
     let contents_path = bundle_path.join("Contents");
     let macos_path = contents_path.join("MacOS");
 
-    std::fs::create_dir_all(&macos_path)
-        .map_err(|e| anyhow::anyhow!("Failed to create bundle directories: {}", e))?;
+    std::fs::create_dir_all(&macos_path).map_err(|e| anyhow::anyhow!("Failed to create bundle directories: {}", e))?;
 
     let target_binary_path = macos_path.join("clash-verge-service");
     let staged = stage_service_binary(&service_binary_path, &target_binary_path)?;
@@ -327,14 +312,10 @@ fn main() -> Result<(), Error> {
 
     let plist_dir = PathBuf::from("/Library/LaunchDaemons");
     if !plist_dir.exists() {
-        std::fs::create_dir(&plist_dir)
-            .map_err(|e| anyhow::anyhow!("Failed to create plist directory: {}", e))?;
+        std::fs::create_dir(&plist_dir).map_err(|e| anyhow::anyhow!("Failed to create plist directory: {}", e))?;
     }
 
-    let plist_file = plist_dir.join(format!(
-        "{}.plist",
-        clash_verge_service_ipc::MACOS_SERVICE_ID
-    ));
+    let plist_file = plist_dir.join(format!("{}.plist", clash_verge_service_ipc::MACOS_SERVICE_ID));
 
     let launchd_plist_content = format!(
         include_str!("../../resources/launchd.plist.tmpl"),
@@ -406,8 +387,8 @@ fn main() -> Result<(), Error> {
         runtime_directory = clash_verge_service_ipc::SERVICE_SLUG,
     );
 
-    let mut unit_file = File::create(&unit_path)
-        .with_context(|| format!("failed to create systemd unit {unit_path:?}"))?;
+    let mut unit_file =
+        File::create(&unit_path).with_context(|| format!("failed to create systemd unit {unit_path:?}"))?;
     unit_file
         .write_all(unit_file_content.as_bytes())
         .with_context(|| format!("failed to write systemd unit {unit_path:?}"))?;
@@ -427,10 +408,7 @@ fn main() -> Result<(), Error> {
 fn main() -> anyhow::Result<()> {
     use platform_lib::{
         Error as WindowsServiceError,
-        service::{
-            ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceState,
-            ServiceType,
-        },
+        service::{ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceState, ServiceType},
         service_manager::{ServiceManager, ServiceManagerAccess},
     };
     use std::ffi::{OsStr, OsString};
@@ -465,14 +443,9 @@ fn main() -> anyhow::Result<()> {
         account_password: None,
     };
 
-    let service_access = ServiceAccess::QUERY_STATUS
-        | ServiceAccess::START
-        | ServiceAccess::STOP
-        | ServiceAccess::CHANGE_CONFIG;
-    match service_manager.open_service(
-        clash_verge_service_ipc::WINDOWS_SERVICE_NAME,
-        service_access,
-    ) {
+    let service_access =
+        ServiceAccess::QUERY_STATUS | ServiceAccess::START | ServiceAccess::STOP | ServiceAccess::CHANGE_CONFIG;
+    match service_manager.open_service(clash_verge_service_ipc::WINDOWS_SERVICE_NAME, service_access) {
         Ok(service) => {
             const ERROR_SERVICE_NOT_ACTIVE: i32 = 1062;
             let status = service.query_status()?;
@@ -521,12 +494,8 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(windows)]
-fn configure_windows_service_recovery(
-    service: &platform_lib::service::Service,
-) -> platform_lib::Result<()> {
-    use platform_lib::service::{
-        ServiceAction, ServiceActionType, ServiceFailureActions, ServiceFailureResetPeriod,
-    };
+fn configure_windows_service_recovery(service: &platform_lib::service::Service) -> platform_lib::Result<()> {
+    use platform_lib::service::{ServiceAction, ServiceActionType, ServiceFailureActions, ServiceFailureResetPeriod};
     use std::time::Duration;
 
     let actions = [5, 10, 30]

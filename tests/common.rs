@@ -3,10 +3,8 @@ use clash_verge_service_ipc::{OwnerCredentials, test_owner_credentials};
 // Each integration-test binary uses a different subset of these helpers.
 #[allow(dead_code)]
 pub fn owner_credentials() -> OwnerCredentials {
-    let app_data_dir =
-        std::env::temp_dir().join(format!("service-ipc-owner-{}", std::process::id()));
-    test_owner_credentials(&app_data_dir)
-        .expect("test owner credentials should be secured for the current user")
+    let app_data_dir = std::env::temp_dir().join(format!("service-ipc-owner-{}", std::process::id()));
+    test_owner_credentials(&app_data_dir).expect("test owner credentials should be secured for the current user")
 }
 
 /// Returns the path to a helper binary built beside the integration tests.

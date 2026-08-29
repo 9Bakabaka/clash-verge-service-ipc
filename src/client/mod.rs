@@ -15,21 +15,18 @@ mod windows_identity;
 
 use crate::{
     AuthenticatedRequest, AuthenticatedSessionRequest, IPC_AUTH_EXPECT, IPC_PATH, IpcCommand,
-    MIN_REQUIRED_SERVICE_REVISION, MacosProxyConfig, OwnerCredentials, OwnerSessionProof,
-    ProtocolInfo, ProtocolVersion, ProxyApplyOutcome, RuntimeBundle, ServiceStatusSnapshot,
-    StageRuntimeOutcome, StartClashRequest, StartClashResult, WriterConfig,
+    MIN_REQUIRED_SERVICE_REVISION, MacosProxyConfig, OwnerCredentials, OwnerSessionProof, ProtocolInfo,
+    ProtocolVersion, ProxyApplyOutcome, RuntimeBundle, ServiceStatusSnapshot, StageRuntimeOutcome, StartClashRequest,
+    StartClashResult, WriterConfig,
     core::structure::{JsonConvert, Response},
 };
 
-static CLIENT_CONFIG: Lazy<Arc<RwLock<Option<IpcConfig>>>> =
-    Lazy::new(|| Arc::new(RwLock::new(None)));
+static CLIENT_CONFIG: Lazy<Arc<RwLock<Option<IpcConfig>>>> = Lazy::new(|| Arc::new(RwLock::new(None)));
 
 static IPC_AUTH_HEADER_KEY: &str = "X-IPC-Magic";
 const LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn protected<'a>(
-    request: kode_bridge::HttpRequestBuilder<'a>,
-) -> kode_bridge::HttpRequestBuilder<'a> {
+fn protected<'a>(request: kode_bridge::HttpRequestBuilder<'a>) -> kode_bridge::HttpRequestBuilder<'a> {
     request.header(
         crate::SERVICE_PROTOCOL_HEADER,
         ProtocolVersion::current().header_value(),
@@ -83,11 +80,7 @@ where
         Some(timeout) => request.timeout(timeout),
         None => request,
     };
-    let response = request
-        .json_body(&body)
-        .send()
-        .await?
-        .json::<Response<R>>()?;
+    let response = request.json_body(&body).send().await?.json::<Response<R>>()?;
     Ok(response)
 }
 
@@ -134,9 +127,7 @@ pub async fn connect() -> Result<IpcHttpClient> {
             enable_pooling: true,
             require_windows_server_system: false,
             #[cfg(all(windows, not(feature = "test")))]
-            windows_server_pid_verifier: Some(
-                windows_identity::verify_registered_service_process_id,
-            ),
+            windows_server_pid_verifier: Some(windows_identity::verify_registered_service_process_id),
             #[cfg(all(windows, feature = "test"))]
             windows_server_pid_verifier: None,
             ..Default::default()
@@ -178,9 +169,9 @@ pub async fn get_status(credentials: &OwnerCredentials) -> Result<Response<Servi
 pub async fn is_reinstall_service_needed() -> bool {
     is_ipc_path_exists()
         && match get_version().await {
-            Ok(resp) => resp.data.is_none_or(|info| {
-                !info.supports_client(ProtocolVersion::current(), MIN_REQUIRED_SERVICE_REVISION)
-            }),
+            Ok(resp) => resp
+                .data
+                .is_none_or(|info| !info.supports_client(ProtocolVersion::current(), MIN_REQUIRED_SERVICE_REVISION)),
             Err(_) => true,
         }
 }
@@ -200,36 +191,15 @@ pub async fn start_clash(
     .await
 }
 
-pub async fn get_clash_logs(
-    credentials: &OwnerCredentials,
-) -> Result<Response<Vec<CompactString>>> {
-    protected_call(
-        Verb::Get,
-        IpcCommand::GetClashLogs,
-        credentials,
-        None,
-        (),
-        None,
-    )
-    .await
+pub async fn get_clash_logs(credentials: &OwnerCredentials) -> Result<Response<Vec<CompactString>>> {
+    protected_call(Verb::Get, IpcCommand::GetClashLogs, credentials, None, (), None).await
 }
 
 pub async fn get_clash_log_snapshot(credentials: &OwnerCredentials) -> Result<Response<String>> {
-    protected_call(
-        Verb::Get,
-        IpcCommand::GetClashLogSnapshot,
-        credentials,
-        None,
-        (),
-        None,
-    )
-    .await
+    protected_call(Verb::Get, IpcCommand::GetClashLogSnapshot, credentials, None, (), None).await
 }
 
-pub async fn stop_clash(
-    credentials: &OwnerCredentials,
-    session: &OwnerSessionProof,
-) -> Result<Response<()>> {
+pub async fn stop_clash(credentials: &OwnerCredentials, session: &OwnerSessionProof) -> Result<Response<()>> {
     protected_call(
         Verb::Delete,
         IpcCommand::StopClash,

@@ -4,11 +4,10 @@ pub use command::IpcCommand;
 pub mod structure;
 pub use structure::{
     AuthenticatedRequest, AuthenticatedSessionRequest, ClashConfig, CoreConfig, MacosProxyConfig,
-    OWNER_TOKEN_FILE_NAME, OwnerCredentials, OwnerIdentity, OwnerSessionHandle, OwnerSessionProof,
-    ProtocolInfo, ProtocolVersion, ProxyApplyOutcome, RemoteProvider, RuntimeAsset, RuntimeBundle,
-    SERVICE_PROTOCOL_HEADER, SESSION_TOKEN_HEX_LEN, ServiceErrorCode, ServiceLifecycleState,
-    ServiceStatusSnapshot, StageRejection, StageRuntimeOutcome, StartClashRequest,
-    StartClashResult, WriterConfig, owner_key,
+    OWNER_TOKEN_FILE_NAME, OwnerCredentials, OwnerIdentity, OwnerSessionHandle, OwnerSessionProof, ProtocolInfo,
+    ProtocolVersion, ProxyApplyOutcome, RemoteProvider, RuntimeAsset, RuntimeBundle, SERVICE_PROTOCOL_HEADER,
+    SESSION_TOKEN_HEX_LEN, ServiceErrorCode, ServiceLifecycleState, ServiceStatusSnapshot, StageRejection,
+    StageRuntimeOutcome, StartClashRequest, StartClashResult, WriterConfig, owner_key,
 };
 
 pub mod paths;
@@ -66,10 +65,7 @@ pub(in crate::core) use unix_security as platform_security;
 pub(in crate::core) use windows_security as platform_security;
 
 #[cfg(feature = "standalone")]
-pub use desired::{
-    ActiveOwnerState, DesiredState, load_active_owner, load_owner_desired_state,
-    restore_desired_state,
-};
+pub use desired::{ActiveOwnerState, DesiredState, load_active_owner, load_owner_desired_state, restore_desired_state};
 #[cfg(feature = "standalone")]
 pub use maintenance::cleanup_stale_owner_state;
 #[cfg(all(feature = "standalone", feature = "test"))]

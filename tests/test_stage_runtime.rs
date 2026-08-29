@@ -4,9 +4,9 @@ mod common;
 
 use anyhow::{Context as _, Result};
 use clash_verge_service_ipc::{
-    OwnerCredentials, OwnerSessionProof, RuntimeAsset, RuntimeBundle, StageRejection,
-    StageRuntimeOutcome, StartClashRequest, get_status, run_ipc_server, service_paths,
-    stage_runtime, start_clash, stop_clash, stop_ipc_server, test_owner_credentials,
+    OwnerCredentials, OwnerSessionProof, RuntimeAsset, RuntimeBundle, StageRejection, StageRuntimeOutcome,
+    StartClashRequest, get_status, run_ipc_server, service_paths, stage_runtime, start_clash, stop_clash,
+    stop_ipc_server, test_owner_credentials,
 };
 use serial_test::serial;
 use std::path::{Path, PathBuf};
@@ -33,8 +33,7 @@ struct RunningCore {
 
 impl RunningCore {
     async fn start(label: &str) -> Result<Self> {
-        let app_root =
-            std::env::temp_dir().join(format!("service-ipc-stage-{label}-{}", std::process::id()));
+        let app_root = std::env::temp_dir().join(format!("service-ipc-stage-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&app_root);
         std::fs::create_dir_all(&app_root)?;
         let app_root = std::fs::canonicalize(app_root)?;
@@ -54,20 +53,14 @@ impl RunningCore {
         )
         .await?;
         anyhow::ensure!(response.code == 0, "{}", response.message);
-        let generation = response
-            .data
-            .context("start omitted its result")?
-            .session
-            .generation;
+        let generation = response.data.context("start omitted its result")?.session.generation;
         let pid = get_status(&credentials)
             .await?
             .data
             .context("status omitted data")?
             .core_pid
             .context("started core has no pid")?;
-        let runtime_dir = service_paths()
-            .for_owner(&credentials.identity)
-            .runtime_dir();
+        let runtime_dir = service_paths().for_owner(&credentials.identity).runtime_dir();
 
         Ok(Self {
             credentials,
@@ -112,9 +105,7 @@ where
 async fn staging_updates_configuration_without_restarting_the_core() -> Result<()> {
     with_server(|| async {
         let core = RunningCore::start("config").await?;
-        let outcome = core
-            .stage(&bundle(&core.app_root, "mode: global\n"))
-            .await?;
+        let outcome = core.stage(&bundle(&core.app_root, "mode: global\n")).await?;
 
         assert!(matches!(outcome, StageRuntimeOutcome::Staged { .. }));
         assert_eq!(
@@ -154,8 +145,7 @@ async fn staging_updates_declared_assets_but_preserves_core_owned_files() -> Res
             b"proxies: []\n"
         );
 
-        core.stage(&bundle(&core.app_root, "mode: direct\n"))
-            .await?;
+        core.stage(&bundle(&core.app_root, "mode: direct\n")).await?;
         assert!(!core.generation.join("providers/copied.yaml").exists());
         assert_eq!(std::fs::read(&core_state)?, b"selected node");
 

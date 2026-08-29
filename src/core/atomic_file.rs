@@ -8,9 +8,7 @@ pub(crate) async fn replace(source: &Path, destination: &Path) -> std::io::Resul
 #[cfg(windows)]
 pub(crate) async fn replace(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt as _;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-    };
+    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW};
 
     let source = source
         .as_os_str()
@@ -40,10 +38,7 @@ pub(crate) async fn replace(source: &Path, destination: &Path) -> std::io::Resul
 mod tests {
     #[tokio::test]
     async fn replace_overwrites_an_existing_destination() -> anyhow::Result<()> {
-        let root = std::env::temp_dir().join(format!(
-            "clash-verge-service-atomic-replace-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("clash-verge-service-atomic-replace-{}", std::process::id()));
         let source = root.join("state.json.tmp");
         let destination = root.join("state.json");
         std::fs::create_dir_all(&root)?;

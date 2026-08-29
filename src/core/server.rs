@@ -1,11 +1,9 @@
 use crate::core::auth::{
-    AuthenticatedOwner, ServiceError, authenticate_owner, hash_session_token,
-    ipc_request_context_to_auth_context,
+    AuthenticatedOwner, ServiceError, authenticate_owner, hash_session_token, ipc_request_context_to_auth_context,
 };
 use crate::core::desired::{
-    ActiveOwnerState, clear_active_owner, commit_active_owner_session, load_active_owner,
-    persist_owner_core_started, persist_owner_core_stopped, persist_owner_core_stopped_by_key,
-    persist_owner_writer_config,
+    ActiveOwnerState, clear_active_owner, commit_active_owner_session, load_active_owner, persist_owner_core_started,
+    persist_owner_core_stopped, persist_owner_core_stopped_by_key, persist_owner_writer_config,
 };
 use crate::core::legacy_cleanup::cleanup_legacy_owner_files;
 use crate::core::logger::set_or_update_writer;
@@ -17,9 +15,9 @@ use crate::core::status::service_status_snapshot;
 use crate::core::structure::{OwnerSessionProof, Response, ServiceLifecycleState};
 use crate::core::{apply_proxy, apply_proxy_or_direct, clear_proxy, validate_proxy_config};
 use crate::{
-    AuthenticatedRequest, AuthenticatedSessionRequest, IpcCommand, MIN_SUPPORTED_CLIENT_REVISION,
-    MacosProxyConfig, OwnerSessionHandle, ProtocolInfo, ProtocolVersion, ProxyApplyOutcome,
-    RuntimeBundle, SERVICE_PROTOCOL_HEADER, StartClashRequest, StartClashResult, WriterConfig,
+    AuthenticatedRequest, AuthenticatedSessionRequest, IpcCommand, MIN_SUPPORTED_CLIENT_REVISION, MacosProxyConfig,
+    OwnerSessionHandle, ProtocolInfo, ProtocolVersion, ProxyApplyOutcome, RuntimeBundle, SERVICE_PROTOCOL_HEADER,
+    StartClashRequest, StartClashResult, WriterConfig,
 };
 use anyhow::{Context as _, Result as AnyResult, anyhow};
 use http::StatusCode;
@@ -72,15 +70,18 @@ async fn owner_proxy_transition(
             "Failed to stop the previous owner core: {stop_error:#}"
         )));
     }
-    transition.start_new_core().await.map_err(|error| {
-        ServiceError::owner_switch_failed(format!("Failed to start owner core: {error:#}"))
-    })?;
-    let active = transition.commit_new_owner().await.map_err(|error| {
-        ServiceError::owner_switch_failed(format!("Failed to commit owner state: {error:#}"))
-    })?;
-    let proxy_outcome = transition.apply_new_proxy().await.map_err(|error| {
-        ServiceError::proxy_apply_failed(format!("Failed to apply owner proxy: {error:#}"))
-    })?;
+    transition
+        .start_new_core()
+        .await
+        .map_err(|error| ServiceError::owner_switch_failed(format!("Failed to start owner core: {error:#}")))?;
+    let active = transition
+        .commit_new_owner()
+        .await
+        .map_err(|error| ServiceError::owner_switch_failed(format!("Failed to commit owner state: {error:#}")))?;
+    let proxy_outcome = transition
+        .apply_new_proxy()
+        .await
+        .map_err(|error| ServiceError::proxy_apply_failed(format!("Failed to apply owner proxy: {error:#}")))?;
     Ok((active, proxy_outcome))
 }
 
@@ -126,9 +127,7 @@ impl OwnerProxyTransition for StartOwnerTransition<'_> {
             .await
             .context("failed to materialize the runtime generation")?;
         let core_manager = CORE_MANAGER.lock().await;
-        let start_result = core_manager
-            .start_core(clash_config, self.owner.identity.clone())
-            .await;
+        let start_result = core_manager.start_core(clash_config, self.owner.identity.clone()).await;
         drop(core_manager);
         if let Err(error) = start_result {
             if let Err(stop_error) = CORE_MANAGER.lock().await.stop_core().await {
@@ -202,16 +201,12 @@ async fn compensate_service_proxy() -> AnyResult<()> {
 }
 
 #[cfg(not(feature = "test"))]
-async fn apply_service_proxy_or_direct(
-    config: Option<&MacosProxyConfig>,
-) -> AnyResult<ProxyApplyOutcome> {
+async fn apply_service_proxy_or_direct(config: Option<&MacosProxyConfig>) -> AnyResult<ProxyApplyOutcome> {
     apply_proxy_or_direct(config).await
 }
 
 #[cfg(feature = "test")]
-async fn apply_service_proxy_or_direct(
-    config: Option<&MacosProxyConfig>,
-) -> AnyResult<ProxyApplyOutcome> {
+async fn apply_service_proxy_or_direct(config: Option<&MacosProxyConfig>) -> AnyResult<ProxyApplyOutcome> {
     let _ = apply_proxy_or_direct;
     Ok(if config.is_some() {
         ProxyApplyOutcome::Applied
@@ -262,10 +257,8 @@ static IPC_LIFECYCLE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Listener state, replaced independently while `IPC_LIFECYCLE_LOCK` serializes supervisors.
 static IPC_SERVER: Lazy<Mutex<Option<IpcHttpServer>>> = Lazy::new(|| Mutex::new(None));
-static IPC_SHUTDOWN_SENDER: Lazy<Mutex<Option<oneshot::Sender<()>>>> =
-    Lazy::new(|| Mutex::new(None));
-static IPC_SHUTDOWN_DONE: Lazy<Mutex<Option<oneshot::Receiver<()>>>> =
-    Lazy::new(|| Mutex::new(None));
+static IPC_SHUTDOWN_SENDER: Lazy<Mutex<Option<oneshot::Sender<()>>>> = Lazy::new(|| Mutex::new(None));
+static IPC_SHUTDOWN_DONE: Lazy<Mutex<Option<oneshot::Receiver<()>>>> = Lazy::new(|| Mutex::new(None));
 
 /// Shuts down the listener before dropping its handle.
 async fn shutdown_ipc_server() {
@@ -334,9 +327,7 @@ pub async fn stop_ipc_server() -> Result<()> {
     Ok(())
 }
 
-pub async fn run_ipc_supervisor_until_shutdown(
-    shutdown: impl Future<Output = ()>,
-) -> AnyResult<()> {
+pub async fn run_ipc_supervisor_until_shutdown(shutdown: impl Future<Output = ()>) -> AnyResult<()> {
     set_service_lifecycle_state(ServiceLifecycleState::Starting);
     info!("Starting IPC server...");
 
@@ -465,10 +456,7 @@ async fn cleanup_stale_ipc_socket() -> Result<()> {
         .await
         {
             Ok(Ok(_stream)) => {
-                warn!(
-                    "IPC socket {:?} is reachable; leaving it in place",
-                    socket_path
-                );
+                warn!("IPC socket {:?} is reachable; leaving it in place", socket_path);
             }
             _ => {
                 info!("Cleaning up stale IPC socket: {:?}", socket_path);
@@ -504,8 +492,7 @@ fn create_ipc_server() -> Result<IpcHttpServer> {
     {
         use platform_lib::{S_IRGRP, S_IROTH, S_IRUSR, S_IWGRP, S_IWOTH, S_IWUSR, mode_t};
 
-        let mode: mode_t =
-            platform_lib::mode_t::from(S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+        let mode: mode_t = platform_lib::mode_t::from(S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
         let server = server.with_listener_mode(mode);
         Ok(server)
     }
@@ -522,9 +509,7 @@ fn create_ipc_server() -> Result<IpcHttpServer> {
     }
 }
 
-fn require_protocol_version(
-    ctx: &kode_bridge::RequestContext,
-) -> std::result::Result<(), ServiceError> {
+fn require_protocol_version(ctx: &kode_bridge::RequestContext) -> std::result::Result<(), ServiceError> {
     let supplied = ctx
         .headers
         .get(SERVICE_PROTOCOL_HEADER)
@@ -596,9 +581,7 @@ async fn enter_owner_lifecycle(
     let gated = match gate {
         OwnerLifecycleGate::Unchecked => Ok(()),
         OwnerLifecycleGate::ActiveOwner => require_active_owner(owner).await,
-        OwnerLifecycleGate::ActiveSession(proof) => {
-            require_active_session(owner, proof).await.map(|_| ())
-        }
+        OwnerLifecycleGate::ActiveSession(proof) => require_active_session(owner, proof).await.map(|_| ()),
     };
     match gated {
         Ok(()) => ControlFlow::Continue(lifecycle_guard),
@@ -623,25 +606,21 @@ fn create_ipc_router() -> Result<Router> {
                 ControlFlow::Continue(authenticated) => authenticated,
                 ControlFlow::Break(response) => return response,
             };
-            let _lifecycle_guard =
-                match enter_owner_lifecycle(&owner, OwnerLifecycleGate::Unchecked).await {
-                    ControlFlow::Continue(guard) => guard,
-                    ControlFlow::Break(response) => return response,
-                };
+            let _lifecycle_guard = match enter_owner_lifecycle(&owner, OwnerLifecycleGate::Unchecked).await {
+                ControlFlow::Continue(guard) => guard,
+                ControlFlow::Break(response) => return response,
+            };
             match service_status_snapshot(&owner).await {
                 Ok(status) => ok_json(status),
-                Err(error) => {
-                    service_unavailable(format!("Failed to collect service status: {}", error))
-                }
+                Err(error) => service_unavailable(format!("Failed to collect service status: {}", error)),
             }
         })
         .post(IpcCommand::StartClash.as_ref(), |ctx| async move {
             trace!("Received StartClash command");
-            let (request, owner) =
-                match authenticate_request::<AuthenticatedRequest<StartClashRequest>>(&ctx) {
-                    ControlFlow::Continue(authenticated) => authenticated,
-                    ControlFlow::Break(response) => return response,
-                };
+            let (request, owner) = match authenticate_request::<AuthenticatedRequest<StartClashRequest>>(&ctx) {
+                ControlFlow::Continue(authenticated) => authenticated,
+                ControlFlow::Break(response) => return response,
+            };
             let start_request = request.payload;
             if hash_session_token(&start_request.proposed_session_token).is_err() {
                 return bad_request("Invalid proposed owner session token");
@@ -651,11 +630,10 @@ fn create_ipc_router() -> Result<Router> {
             {
                 return service_error(ServiceError::invalid_proxy_config(error.to_string()));
             }
-            let _lifecycle_guard =
-                match enter_owner_lifecycle(&owner, OwnerLifecycleGate::Unchecked).await {
-                    ControlFlow::Continue(guard) => guard,
-                    ControlFlow::Break(response) => return response,
-                };
+            let _lifecycle_guard = match enter_owner_lifecycle(&owner, OwnerLifecycleGate::Unchecked).await {
+                ControlFlow::Continue(guard) => guard,
+                ControlFlow::Break(response) => return response,
+            };
             let previous_owner = match load_active_owner().await {
                 Ok(owner) => owner,
                 Err(error) => {
@@ -678,9 +656,7 @@ fn create_ipc_router() -> Result<Router> {
                 Err(error) => return service_error(error),
             };
             if let Err(error) = cleanup_legacy_owner_files(&owner).await {
-                warn!(
-                    "Core start committed, but legacy owner cleanup will be retried later: {error}"
-                );
+                warn!("Core start committed, but legacy owner cleanup will be retried later: {error}");
             }
             info!("Core started successfully");
             ok_json(StartClashResult {
@@ -696,11 +672,10 @@ fn create_ipc_router() -> Result<Router> {
                 ControlFlow::Continue(authenticated) => authenticated,
                 ControlFlow::Break(response) => return response,
             };
-            let _lifecycle_guard =
-                match enter_owner_lifecycle(&owner, OwnerLifecycleGate::ActiveOwner).await {
-                    ControlFlow::Continue(guard) => guard,
-                    ControlFlow::Break(response) => return response,
-                };
+            let _lifecycle_guard = match enter_owner_lifecycle(&owner, OwnerLifecycleGate::ActiveOwner).await {
+                ControlFlow::Continue(guard) => guard,
+                ControlFlow::Break(response) => return response,
+            };
             ok_json(LOGGER_MANAGER.get_logs().await)
         })
         .get(IpcCommand::GetClashLogSnapshot.as_ref(), |ctx| async move {
@@ -709,38 +684,30 @@ fn create_ipc_router() -> Result<Router> {
                 ControlFlow::Continue(authenticated) => authenticated,
                 ControlFlow::Break(response) => return response,
             };
-            let _lifecycle_guard =
-                match enter_owner_lifecycle(&owner, OwnerLifecycleGate::ActiveOwner).await {
-                    ControlFlow::Continue(guard) => guard,
-                    ControlFlow::Break(response) => return response,
-                };
+            let _lifecycle_guard = match enter_owner_lifecycle(&owner, OwnerLifecycleGate::ActiveOwner).await {
+                ControlFlow::Continue(guard) => guard,
+                ControlFlow::Break(response) => return response,
+            };
             let path = service_paths()
                 .for_owner(&owner.identity)
                 .logs_dir()
                 .join("service_latest.log");
             match read_log_snapshot(&path).await {
                 Ok(snapshot) => ok_json(snapshot),
-                Err(error) => {
-                    service_unavailable(format!("Failed to read core log snapshot: {error}"))
-                }
+                Err(error) => service_unavailable(format!("Failed to read core log snapshot: {error}")),
             }
         })
         .delete(IpcCommand::StopClash.as_ref(), |ctx| async move {
             trace!("Received StopClash command");
-            let (request, owner) =
-                match authenticate_request::<AuthenticatedSessionRequest<()>>(&ctx) {
-                    ControlFlow::Continue(authenticated) => authenticated,
-                    ControlFlow::Break(response) => return response,
-                };
-            let _lifecycle_guard = match enter_owner_lifecycle(
-                &owner,
-                OwnerLifecycleGate::ActiveSession(&request.session),
-            )
-            .await
-            {
-                ControlFlow::Continue(guard) => guard,
+            let (request, owner) = match authenticate_request::<AuthenticatedSessionRequest<()>>(&ctx) {
+                ControlFlow::Continue(authenticated) => authenticated,
                 ControlFlow::Break(response) => return response,
             };
+            let _lifecycle_guard =
+                match enter_owner_lifecycle(&owner, OwnerLifecycleGate::ActiveSession(&request.session)).await {
+                    ControlFlow::Continue(guard) => guard,
+                    ControlFlow::Break(response) => return response,
+                };
             if let Err(error) = clear_proxy_with_direct_compensation().await {
                 return service_error(error);
             }
@@ -762,22 +729,17 @@ fn create_ipc_router() -> Result<Router> {
         })
         .put(IpcCommand::StageRuntime.as_ref(), |ctx| async move {
             trace!("Received StageRuntime command");
-            let (request, owner) =
-                match authenticate_request::<AuthenticatedSessionRequest<RuntimeBundle>>(&ctx) {
-                    ControlFlow::Continue(authenticated) => authenticated,
-                    ControlFlow::Break(response) => return response,
-                };
-            // Staging rewrites the live generation, so hold the lifecycle lock and require its
-            // current session for the whole operation.
-            let _lifecycle_guard = match enter_owner_lifecycle(
-                &owner,
-                OwnerLifecycleGate::ActiveSession(&request.session),
-            )
-            .await
-            {
-                ControlFlow::Continue(guard) => guard,
+            let (request, owner) = match authenticate_request::<AuthenticatedSessionRequest<RuntimeBundle>>(&ctx) {
+                ControlFlow::Continue(authenticated) => authenticated,
                 ControlFlow::Break(response) => return response,
             };
+            // Staging rewrites the live generation, so hold the lifecycle lock and require its
+            // current session for the whole operation.
+            let _lifecycle_guard =
+                match enter_owner_lifecycle(&owner, OwnerLifecycleGate::ActiveSession(&request.session)).await {
+                    ControlFlow::Continue(guard) => guard,
+                    ControlFlow::Break(response) => return response,
+                };
             match stage_runtime(&owner, &request.payload).await {
                 Ok(outcome) => ok_json(outcome),
                 Err(error) => service_error(error),
@@ -785,21 +747,16 @@ fn create_ipc_router() -> Result<Router> {
         })
         .put(IpcCommand::UpdateWriter.as_ref(), |ctx| async move {
             trace!("Received UpdateWriter command");
-            let (request, owner) =
-                match authenticate_request::<AuthenticatedSessionRequest<WriterConfig>>(&ctx) {
-                    ControlFlow::Continue(authenticated) => authenticated,
-                    ControlFlow::Break(response) => return response,
-                };
-            let mut writer_config = request.payload;
-            let _lifecycle_guard = match enter_owner_lifecycle(
-                &owner,
-                OwnerLifecycleGate::ActiveSession(&request.session),
-            )
-            .await
-            {
-                ControlFlow::Continue(guard) => guard,
+            let (request, owner) = match authenticate_request::<AuthenticatedSessionRequest<WriterConfig>>(&ctx) {
+                ControlFlow::Continue(authenticated) => authenticated,
                 ControlFlow::Break(response) => return response,
             };
+            let mut writer_config = request.payload;
+            let _lifecycle_guard =
+                match enter_owner_lifecycle(&owner, OwnerLifecycleGate::ActiveSession(&request.session)).await {
+                    ControlFlow::Continue(guard) => guard,
+                    ControlFlow::Break(response) => return response,
+                };
             // Never let the client choose a service-owned log destination.
             writer_config.directory = service_paths()
                 .for_owner(&owner.identity)
@@ -819,21 +776,16 @@ fn create_ipc_router() -> Result<Router> {
         })
         .put(IpcCommand::SetSystemProxy.as_ref(), |ctx| async move {
             trace!("Received SetSystemProxy command");
-            let (request, owner) =
-                match authenticate_request::<AuthenticatedSessionRequest<MacosProxyConfig>>(&ctx) {
-                    ControlFlow::Continue(authenticated) => authenticated,
-                    ControlFlow::Break(response) => return response,
-                };
-            // Reject a stale session before reporting payload validation errors.
-            let _lifecycle_guard = match enter_owner_lifecycle(
-                &owner,
-                OwnerLifecycleGate::ActiveSession(&request.session),
-            )
-            .await
-            {
-                ControlFlow::Continue(guard) => guard,
+            let (request, owner) = match authenticate_request::<AuthenticatedSessionRequest<MacosProxyConfig>>(&ctx) {
+                ControlFlow::Continue(authenticated) => authenticated,
                 ControlFlow::Break(response) => return response,
             };
+            // Reject a stale session before reporting payload validation errors.
+            let _lifecycle_guard =
+                match enter_owner_lifecycle(&owner, OwnerLifecycleGate::ActiveSession(&request.session)).await {
+                    ControlFlow::Continue(guard) => guard,
+                    ControlFlow::Break(response) => return response,
+                };
             if let Err(error) = validate_proxy_config(&request.payload) {
                 return service_error(ServiceError::invalid_proxy_config(error.to_string()));
             }
@@ -853,8 +805,7 @@ async fn read_log_snapshot(path: &std::path::Path) -> std::io::Result<String> {
     let mut file = tokio::fs::File::open(path).await?;
     let length = file.metadata().await?.len();
     if length > MAX_SNAPSHOT_BYTES {
-        file.seek(std::io::SeekFrom::Start(length - MAX_SNAPSHOT_BYTES))
-            .await?;
+        file.seek(std::io::SeekFrom::Start(length - MAX_SNAPSHOT_BYTES)).await?;
     }
     let mut content = Vec::with_capacity(length.min(MAX_SNAPSHOT_BYTES) as usize);
     file.read_to_end(&mut content).await?;
@@ -884,12 +835,7 @@ fn service_unavailable(message: impl Into<String>) -> Result<HttpResponse> {
 }
 
 fn bad_request(message: impl Into<String>) -> Result<HttpResponse> {
-    json_response::<()>(
-        StatusCode::BAD_REQUEST,
-        StatusCode::BAD_REQUEST.as_u16(),
-        message,
-        None,
-    )
+    json_response::<()>(StatusCode::BAD_REQUEST, StatusCode::BAD_REQUEST.as_u16(), message, None)
 }
 
 fn service_error(error: ServiceError) -> Result<HttpResponse> {
@@ -901,9 +847,7 @@ fn service_error(error: ServiceError) -> Result<HttpResponse> {
     json_response::<()>(status, error.code as u16, error.message, None)
 }
 
-async fn require_active_owner(
-    owner: &crate::core::auth::AuthenticatedOwner,
-) -> std::result::Result<(), ServiceError> {
+async fn require_active_owner(owner: &crate::core::auth::AuthenticatedOwner) -> std::result::Result<(), ServiceError> {
     if load_active_owner()
         .await
         .map_err(|_| ServiceError::not_active())?
@@ -933,14 +877,10 @@ pub async fn require_active_session(
         .await
         .map_err(|_| ServiceError::stale_owner_session())?
         .ok_or_else(ServiceError::stale_owner_session)?;
-    let supplied_hash =
-        hash_session_token(&proof.token).map_err(|_| ServiceError::stale_owner_session())?;
+    let supplied_hash = hash_session_token(&proof.token).map_err(|_| ServiceError::stale_owner_session())?;
     if active.owner_key != owner.key
         || active.generation != proof.generation
-        || !constant_time_eq(
-            active.session_token_hash.as_bytes(),
-            supplied_hash.as_bytes(),
-        )
+        || !constant_time_eq(active.session_token_hash.as_bytes(), supplied_hash.as_bytes())
     {
         return Err(ServiceError::stale_owner_session());
     }
@@ -958,10 +898,7 @@ fn json_response<T: Serialize>(
         message: message.into(),
         data,
     };
-    Ok(HttpResponse::builder()
-        .status(status)
-        .json(&json_value)?
-        .build())
+    Ok(HttpResponse::builder().status(status).json(&json_value)?.build())
 }
 
 static OWNER_LIFECYCLE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -969,8 +906,8 @@ static OWNER_LIFECYCLE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 #[cfg(test)]
 mod owner_lifecycle_tests {
     use super::{
-        OwnerProxyTransition, WINDOWS_CONTROL_PIPE_SDDL, owner_proxy_transition,
-        require_active_owner, require_active_session,
+        OwnerProxyTransition, WINDOWS_CONTROL_PIPE_SDDL, owner_proxy_transition, require_active_owner,
+        require_active_session,
     };
     use crate::ServiceErrorCode;
     use crate::core::auth::AuthenticatedOwner;

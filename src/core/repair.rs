@@ -25,12 +25,7 @@ pub fn acquire_service_repair_gate() -> Result<Option<ServiceRepairGate>> {
 
         file.set_permissions(std::fs::Permissions::from_mode(0o600))
             .with_context(|| format!("failed to secure service repair gate {path:?}"))?;
-        let status = unsafe {
-            platform_lib::flock(
-                file.as_raw_fd(),
-                platform_lib::LOCK_EX | platform_lib::LOCK_NB,
-            )
-        };
+        let status = unsafe { platform_lib::flock(file.as_raw_fd(), platform_lib::LOCK_EX | platform_lib::LOCK_NB) };
         if status == 0 {
             return Ok(Some(ServiceRepairGate { _file: file }));
         }
@@ -53,7 +48,6 @@ pub fn acquire_service_repair_gate() -> Result<Option<ServiceRepairGate>> {
         if unsafe { GetLastError() } == ERROR_LOCK_VIOLATION {
             return Ok(None);
         }
-        Err(std::io::Error::last_os_error())
-            .with_context(|| format!("failed to lock service repair gate {path:?}"))
+        Err(std::io::Error::last_os_error()).with_context(|| format!("failed to lock service repair gate {path:?}"))
     }
 }

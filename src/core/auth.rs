@@ -1,8 +1,6 @@
 #[cfg(unix)]
 use crate::owner_key;
-use crate::{
-    IPC_AUTH_EXPECT, OwnerCredentials, OwnerIdentity, SESSION_TOKEN_HEX_LEN, ServiceErrorCode,
-};
+use crate::{IPC_AUTH_EXPECT, OwnerCredentials, OwnerIdentity, SESSION_TOKEN_HEX_LEN, ServiceErrorCode};
 use kode_bridge::errors::KodeBridgeError;
 use kode_bridge::ipc_http_server::RequestContext;
 use sha2::{Digest as _, Sha256};
@@ -34,10 +32,7 @@ impl ServiceError {
     }
 
     pub(crate) fn not_active() -> Self {
-        Self::new(
-            ServiceErrorCode::NotActive,
-            "owner is authenticated but is not active",
-        )
+        Self::new(ServiceErrorCode::NotActive, "owner is authenticated but is not active")
     }
 
     pub(crate) fn owner_switch_failed(message: impl Into<String>) -> Self {
@@ -52,10 +47,7 @@ impl ServiceError {
     }
 
     pub(crate) fn stale_owner_session() -> Self {
-        Self::new(
-            ServiceErrorCode::StaleOwnerSession,
-            "owner session is stale or invalid",
-        )
+        Self::new(ServiceErrorCode::StaleOwnerSession, "owner session is stale or invalid")
     }
 
     pub(crate) fn invalid_proxy_config(message: impl Into<String>) -> Self {
@@ -86,10 +78,7 @@ pub enum AuthStatus {
 
 pub(crate) fn hash_session_token(token: &str) -> anyhow::Result<String> {
     anyhow::ensure!(
-        token.len() == SESSION_TOKEN_HEX_LEN
-            && token
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+        token.len() == SESSION_TOKEN_HEX_LEN && token.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
         "owner session token must be 64 lowercase hexadecimal characters"
     );
     Ok(Sha256::digest(token.as_bytes())
@@ -98,9 +87,7 @@ pub(crate) fn hash_session_token(token: &str) -> anyhow::Result<String> {
         .collect())
 }
 
-pub fn ipc_request_context_to_auth_context(
-    ctx: &RequestContext,
-) -> Result<AuthStatus, KodeBridgeError> {
+pub fn ipc_request_context_to_auth_context(ctx: &RequestContext) -> Result<AuthStatus, KodeBridgeError> {
     let headers = &ctx.headers;
     match headers.get("X-IPC-Magic") {
         Some(token) if token == IPC_AUTH_EXPECT => Ok(AuthStatus::Authorized),
@@ -110,19 +97,14 @@ pub fn ipc_request_context_to_auth_context(
 }
 
 #[cfg(unix)]
-pub fn validate_unix_identity(
-    declared: &OwnerIdentity,
-    peer: Option<(u32, u32)>,
-) -> Result<(), ServiceError> {
+pub fn validate_unix_identity(declared: &OwnerIdentity, peer: Option<(u32, u32)>) -> Result<(), ServiceError> {
     let OwnerIdentity::Unix { uid, gid } = declared else {
         return Err(ServiceError::unauthorized(
             "owner identity does not match the Unix transport",
         ));
     };
     let Some((peer_uid, peer_gid)) = peer else {
-        return Err(ServiceError::unauthorized(
-            "kernel peer credentials are unavailable",
-        ));
+        return Err(ServiceError::unauthorized("kernel peer credentials are unavailable"));
     };
 
     if *uid != peer_uid || *gid != peer_gid {
@@ -156,9 +138,8 @@ pub fn authenticate_owner(
 
         let app_data_root = std::fs::canonicalize(&credentials.app_data_dir)
             .map_err(|_| ServiceError::unauthorized("application data root is unavailable"))?;
-        let metadata = std::fs::metadata(&app_data_root).map_err(|_| {
-            ServiceError::unauthorized("application data root metadata is unavailable")
-        })?;
+        let metadata = std::fs::metadata(&app_data_root)
+            .map_err(|_| ServiceError::unauthorized("application data root metadata is unavailable"))?;
         let OwnerIdentity::Unix { uid, .. } = credentials.identity else {
             return Err(ServiceError::unauthorized(
                 "owner identity does not match the Unix transport",
@@ -247,32 +228,25 @@ mod windows_auth {
     use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _};
     use std::path::{Path, PathBuf};
     use windows_sys::Win32::Foundation::{GENERIC_READ, INVALID_HANDLE_VALUE, LocalFree};
-    use windows_sys::Win32::Security::Authorization::{
-        ConvertStringSidToSidW, GetSecurityInfo, SE_FILE_OBJECT,
-    };
+    use windows_sys::Win32::Security::Authorization::{ConvertStringSidToSidW, GetSecurityInfo, SE_FILE_OBJECT};
     use windows_sys::Win32::Security::{
-        ACCESS_ALLOWED_ACE, ACL, DACL_SECURITY_INFORMATION, EqualSid, GetAce,
-        GetSecurityDescriptorControl, IsValidSid, IsWellKnownSid, OWNER_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, WinBuiltinAdministratorsSid,
-        WinLocalSystemSid,
+        ACCESS_ALLOWED_ACE, ACL, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetSecurityDescriptorControl, IsValidSid,
+        IsWellKnownSid, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
+        WinBuiltinAdministratorsSid, WinLocalSystemSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
-        FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FILE_TYPE_DISK, GetFileInformationByHandle, GetFileType, OPEN_EXISTING, READ_CONTROL,
+        BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TYPE_DISK, GetFileInformationByHandle, GetFileType, OPEN_EXISTING,
+        READ_CONTROL,
     };
 
     const TOKEN_BYTES: usize = 32;
     const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
 
-    pub(super) fn authenticate(
-        credentials: &OwnerCredentials,
-    ) -> Result<AuthenticatedOwner, ServiceError> {
+    pub(super) fn authenticate(credentials: &OwnerCredentials) -> Result<AuthenticatedOwner, ServiceError> {
         let OwnerIdentity::Windows { sid } = &credentials.identity else {
-            return Err(unauthorized(
-                "owner identity does not match the Windows transport",
-            ));
+            return Err(unauthorized("owner identity does not match the Windows transport"));
         };
         let request_token = credentials
             .token
@@ -307,22 +281,15 @@ mod windows_auth {
     }
 
     fn canonical_app_data_root(path: &Path) -> Result<PathBuf, ServiceError> {
-        let metadata = std::fs::symlink_metadata(path)
-            .map_err(|_| unauthorized("application data root is unavailable"))?;
+        let metadata =
+            std::fs::symlink_metadata(path).map_err(|_| unauthorized("application data root is unavailable"))?;
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(unauthorized(
-                "application data root is not an ordinary directory",
-            ));
+            return Err(unauthorized("application data root is not an ordinary directory"));
         }
-        std::fs::canonicalize(path)
-            .map_err(|_| unauthorized("application data root could not be canonicalized"))
+        std::fs::canonicalize(path).map_err(|_| unauthorized("application data root could not be canonicalized"))
     }
 
-    fn open_no_reparse(
-        path: &Path,
-        directory: bool,
-        access: u32,
-    ) -> Result<std::fs::File, ServiceError> {
+    fn open_no_reparse(path: &Path, directory: bool, access: u32) -> Result<std::fs::File, ServiceError> {
         let wide = wide_path(path)?;
         let flags = FILE_FLAG_OPEN_REPARSE_POINT
             | if directory {
@@ -357,13 +324,9 @@ mod windows_auth {
             || (information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0) != directory
             || (!directory && unsafe { GetFileType(handle) } != FILE_TYPE_DISK)
         {
-            return Err(unauthorized(
-                "owner credential path has an invalid file type",
-            ));
+            return Err(unauthorized("owner credential path has an invalid file type"));
         }
-        if !directory
-            && (information.nFileSizeHigh != 0 || information.nFileSizeLow != TOKEN_BYTES as u32)
-        {
+        if !directory && (information.nFileSizeHigh != 0 || information.nFileSizeLow != TOKEN_BYTES as u32) {
             return Err(unauthorized("owner token file has an invalid size"));
         }
         Ok(())
@@ -372,21 +335,13 @@ mod windows_auth {
     fn validate_owner(handle: *mut c_void, declared_sid: PSID) -> Result<(), ServiceError> {
         let security = SecurityInfo::read(handle, OWNER_SECURITY_INFORMATION)?;
         if security.owner.is_null() || unsafe { EqualSid(security.owner, declared_sid) } == 0 {
-            return Err(unauthorized(
-                "owner credential path has an unexpected owner",
-            ));
+            return Err(unauthorized("owner credential path has an unexpected owner"));
         }
         Ok(())
     }
 
-    fn validate_token_security(
-        handle: *mut c_void,
-        declared_sid: PSID,
-    ) -> Result<(), ServiceError> {
-        let security = SecurityInfo::read(
-            handle,
-            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-        )?;
+    fn validate_token_security(handle: *mut c_void, declared_sid: PSID) -> Result<(), ServiceError> {
+        let security = SecurityInfo::read(handle, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION)?;
         if security.owner.is_null() || unsafe { EqualSid(security.owner, declared_sid) } == 0 {
             return Err(unauthorized("owner token file has an unexpected owner"));
         }
@@ -396,9 +351,7 @@ mod windows_auth {
 
         let mut control = 0_u16;
         let mut revision = 0_u32;
-        if unsafe {
-            GetSecurityDescriptorControl(security.descriptor.0, &mut control, &mut revision)
-        } == 0
+        if unsafe { GetSecurityDescriptorControl(security.descriptor.0, &mut control, &mut revision) } == 0
             || control & SE_DACL_PROTECTED == 0
         {
             return Err(unauthorized("owner token DACL is not protected"));
@@ -413,14 +366,10 @@ mod windows_auth {
                 return Err(unauthorized("owner token DACL could not be inspected"));
             }
             let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
-            if allowed.Header.AceType != ACCESS_ALLOWED_ACE_TYPE
-                || allowed.Mask & FILE_ALL_ACCESS != FILE_ALL_ACCESS
-            {
+            if allowed.Header.AceType != ACCESS_ALLOWED_ACE_TYPE || allowed.Mask & FILE_ALL_ACCESS != FILE_ALL_ACCESS {
                 return Err(unauthorized("owner token DACL contains an unexpected ACE"));
             }
-            let ace_sid = std::ptr::addr_of!(allowed.SidStart)
-                .cast_mut()
-                .cast::<c_void>();
+            let ace_sid = std::ptr::addr_of!(allowed.SidStart).cast_mut().cast::<c_void>();
             if unsafe { IsValidSid(ace_sid) } == 0 {
                 return Err(unauthorized("owner token DACL contains an invalid SID"));
             }
@@ -431,15 +380,11 @@ mod windows_auth {
             } else if unsafe { IsWellKnownSid(ace_sid, WinBuiltinAdministratorsSid) } != 0 {
                 administrators_ace = true;
             } else {
-                return Err(unauthorized(
-                    "owner token DACL grants access to another SID",
-                ));
+                return Err(unauthorized("owner token DACL grants access to another SID"));
             }
         }
         if !owner_ace || !system_ace || !administrators_ace {
-            return Err(unauthorized(
-                "owner token DACL is missing a required principal",
-            ));
+            return Err(unauthorized("owner token DACL is missing a required principal"));
         }
         Ok(())
     }
@@ -470,9 +415,7 @@ mod windows_auth {
     fn constant_time_eq(left: &[u8; TOKEN_BYTES], right: &[u8; TOKEN_BYTES]) -> bool {
         left.iter()
             .zip(right)
-            .fold(0_u8, |difference, (left, right)| {
-                difference | (left ^ right)
-            })
+            .fold(0_u8, |difference, (left, right)| difference | (left ^ right))
             == 0
     }
 
@@ -496,9 +439,7 @@ mod windows_auth {
             let mut wide: Vec<u16> = value.encode_utf16().collect();
             wide.push(0);
             let mut sid = std::ptr::null_mut();
-            if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &mut sid) } == 0
-                || unsafe { IsValidSid(sid) } == 0
-            {
+            if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &mut sid) } == 0 || unsafe { IsValidSid(sid) } == 0 {
                 return Err(unauthorized("declared Windows SID is invalid"));
             }
             Ok(Self(sid))
@@ -541,9 +482,7 @@ mod windows_auth {
                 )
             };
             if status != 0 || descriptor.is_null() {
-                return Err(unauthorized(
-                    "owner credential security could not be inspected",
-                ));
+                return Err(unauthorized("owner credential security could not be inspected"));
             }
             Ok(Self {
                 owner,
@@ -577,19 +516,16 @@ mod tests {
     fn unix_owner_must_match_kernel_peer_credentials() {
         let declared = OwnerIdentity::Unix { uid: 502, gid: 20 };
 
-        let error = validate_unix_identity(&declared, Some((501, 20)))
-            .expect_err("mismatched UID must be rejected");
+        let error = validate_unix_identity(&declared, Some((501, 20))).expect_err("mismatched UID must be rejected");
 
         assert_eq!(error.code, ServiceErrorCode::UnauthorizedOwner);
     }
 
     #[test]
-    fn authenticated_unix_owner_uses_canonical_owned_app_root()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn authenticated_unix_owner_uses_canonical_owned_app_root() -> Result<(), Box<dyn std::error::Error>> {
         let uid = unsafe { platform_lib::geteuid() };
         let gid = unsafe { platform_lib::getegid() };
-        let app_root =
-            std::env::temp_dir().join(format!("service-owner-auth-{}", std::process::id()));
+        let app_root = std::env::temp_dir().join(format!("service-owner-auth-{}", std::process::id()));
         std::fs::create_dir_all(&app_root)?;
         let context = RequestContext {
             method: Method::POST,
@@ -688,10 +624,7 @@ mod windows_tests {
         let _ = std::fs::remove_dir_all(&root);
         let credentials = test_owner_credentials(&root)?;
 
-        assert_eq!(
-            authenticate(&credentials)?.app_data_root,
-            root.canonicalize()?
-        );
+        assert_eq!(authenticate(&credentials)?.app_data_root, root.canonicalize()?);
 
         let mut wrong_token = credentials.clone();
         wrong_token.token = Some("00".repeat(32));

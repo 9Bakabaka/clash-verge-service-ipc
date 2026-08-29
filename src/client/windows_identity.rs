@@ -14,14 +14,8 @@ fn is_local_system_account(account: &OsStr) -> bool {
     )
 }
 
-fn trusted_service_identity(
-    pipe_process_id: u32,
-    service_process_id: Option<u32>,
-    account: Option<&OsStr>,
-) -> bool {
-    pipe_process_id != 0
-        && service_process_id == Some(pipe_process_id)
-        && account.is_some_and(is_local_system_account)
+fn trusted_service_identity(pipe_process_id: u32, service_process_id: Option<u32>, account: Option<&OsStr>) -> bool {
+    pipe_process_id != 0 && service_process_id == Some(pipe_process_id) && account.is_some_and(is_local_system_account)
 }
 
 #[cfg(not(feature = "test"))]
@@ -30,10 +24,7 @@ fn verify_registered_service_process_id_inner(pipe_process_id: u32) -> Result<()
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
         .context("failed to connect to the Windows Service Control Manager")?;
     let service = manager
-        .open_service(
-            service_name,
-            ServiceAccess::QUERY_STATUS | ServiceAccess::QUERY_CONFIG,
-        )
+        .open_service(service_name, ServiceAccess::QUERY_STATUS | ServiceAccess::QUERY_CONFIG)
         .with_context(|| format!("failed to query registered service {service_name:?}"))?;
     let status = service
         .query_status()
@@ -42,14 +33,8 @@ fn verify_registered_service_process_id_inner(pipe_process_id: u32) -> Result<()
         .query_config()
         .with_context(|| format!("failed to query configuration for service {service_name:?}"))?;
 
-    if !trusted_service_identity(
-        pipe_process_id,
-        status.process_id,
-        config.account_name.as_deref(),
-    ) {
-        bail!(
-            "Windows named-pipe server does not match the registered LocalSystem service process"
-        );
+    if !trusted_service_identity(pipe_process_id, status.process_id, config.account_name.as_deref()) {
+        bail!("Windows named-pipe server does not match the registered LocalSystem service process");
     }
 
     Ok(())

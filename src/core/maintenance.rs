@@ -33,27 +33,20 @@ pub fn cleanup_stale_owner_state() -> Result<Vec<String>> {
         if identity_exists(&identity)? {
             continue;
         }
-        if active_owner
-            .as_ref()
-            .is_some_and(|active| active.owner_key == key)
-        {
+        if active_owner.as_ref().is_some_and(|active| active.owner_key == key) {
             match std::fs::remove_file(paths.active_owner_path()) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error).context("failed to clear stale active owner"),
             }
         }
-        std::fs::remove_dir_all(entry.path())
-            .with_context(|| format!("failed to remove stale owner state {key}"))?;
+        std::fs::remove_dir_all(entry.path()).with_context(|| format!("failed to remove stale owner state {key}"))?;
         removed.push(key);
     }
     Ok(removed)
 }
 
-pub(crate) async fn persist_owner_identity(
-    identity: &OwnerIdentity,
-    owner_root: &std::path::Path,
-) -> Result<()> {
+pub(crate) async fn persist_owner_identity(identity: &OwnerIdentity, owner_root: &std::path::Path) -> Result<()> {
     let path = owner_root.join("owner.json");
     let temporary = owner_root.join("owner.json.tmp");
     tokio::fs::write(&temporary, serde_json::to_vec_pretty(identity)?)
@@ -82,16 +75,9 @@ fn acquire_stopped_service_guard() -> Result<StoppedServiceGuard> {
             .create(true)
             .truncate(false)
             .open(paths.owner_lock_path())?;
-        if unsafe {
-            platform_lib::flock(
-                file.as_raw_fd(),
-                platform_lib::LOCK_EX | platform_lib::LOCK_NB,
-            )
-        } != 0
-        {
-            return Err(std::io::Error::last_os_error()).context(
-                "service owner lock is held; stop the service before stale-owner maintenance",
-            );
+        if unsafe { platform_lib::flock(file.as_raw_fd(), platform_lib::LOCK_EX | platform_lib::LOCK_NB) } != 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("service owner lock is held; stop the service before stale-owner maintenance");
         }
         Ok(StoppedServiceGuard { _file: file })
     }
@@ -109,9 +95,8 @@ fn acquire_stopped_service_guard() -> Result<StoppedServiceGuard> {
             .truncate(false)
             .open(paths.owner_lock_path())?;
         if unsafe { LockFile(file.as_raw_handle(), 0, 0, u32::MAX, u32::MAX) } == 0 {
-            return Err(std::io::Error::last_os_error()).context(
-                "service owner lock is held; stop the service before stale-owner maintenance",
-            );
+            return Err(std::io::Error::last_os_error())
+                .context("service owner lock is held; stop the service before stale-owner maintenance");
         }
         Ok(StoppedServiceGuard { _file: file })
     }
@@ -128,10 +113,7 @@ fn read_active_owner() -> Result<Option<ActiveOwnerState>> {
     }
 }
 
-fn owner_identity_for_directory(
-    path: &std::path::Path,
-    key: &str,
-) -> Result<Option<OwnerIdentity>> {
+fn owner_identity_for_directory(path: &std::path::Path, key: &str) -> Result<Option<OwnerIdentity>> {
     #[cfg(unix)]
     let identity = match key.parse::<u32>() {
         Ok(uid) => OwnerIdentity::Unix { uid, gid: 0 },
@@ -140,9 +122,7 @@ fn owner_identity_for_directory(
 
     #[cfg(windows)]
     let identity: OwnerIdentity = match std::fs::read(path.join("owner.json")) {
-        Ok(content) => {
-            serde_json::from_slice(&content).context("failed to parse Windows owner metadata")?
-        }
+        Ok(content) => serde_json::from_slice(&content).context("failed to parse Windows owner metadata")?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
@@ -166,9 +146,7 @@ fn identity_exists(identity: &OwnerIdentity) -> Result<bool> {
 #[cfg(windows)]
 fn identity_exists(identity: &OwnerIdentity) -> Result<bool> {
     use std::os::windows::ffi::OsStrExt as _;
-    use windows_sys::Win32::Foundation::{
-        ERROR_INSUFFICIENT_BUFFER, ERROR_NONE_MAPPED, GetLastError,
-    };
+    use windows_sys::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_NONE_MAPPED, GetLastError};
     use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
     use windows_sys::Win32::Security::LookupAccountSidW;
 
@@ -178,9 +156,7 @@ fn identity_exists(identity: &OwnerIdentity) -> Result<bool> {
     let mut wide: Vec<u16> = std::ffi::OsStr::new(sid).encode_wide().collect();
     wide.push(0);
     let mut binary_sid = std::ptr::null_mut();
-    if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &mut binary_sid) } == 0
-        || binary_sid.is_null()
-    {
+    if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &mut binary_sid) } == 0 || binary_sid.is_null() {
         return Err(std::io::Error::last_os_error()).context("failed to parse owner SID");
     }
     let binary_sid = LocalSid(binary_sid);

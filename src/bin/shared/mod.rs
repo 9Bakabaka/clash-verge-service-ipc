@@ -30,15 +30,10 @@ pub fn uninstall_old_service() -> Result<(), Error> {
 
     run_command("launchctl", &["stop", "io.github.clashverge.helper"], false)?;
     run_command("launchctl", &["bootout", "system", plist_file], false)?;
-    run_command(
-        "launchctl",
-        &["disable", "system/io.github.clashverge.helper"],
-        false,
-    )?;
+    run_command("launchctl", &["disable", "system/io.github.clashverge.helper"], false)?;
 
     if Path::new(plist_file).exists() {
-        std::fs::remove_file(plist_file)
-            .map_err(|e| anyhow::anyhow!("Failed to remove plist file: {}", e))?;
+        std::fs::remove_file(plist_file).map_err(|e| anyhow::anyhow!("Failed to remove plist file: {}", e))?;
     }
 
     if Path::new(target_binary_path).exists() {

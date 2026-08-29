@@ -41,16 +41,8 @@ mod tests {
     #[test]
     fn compiled_channel_has_a_self_consistent_identity() {
         assert!(!CHANNEL_IDENTITY.id.is_empty());
-        assert!(
-            CHANNEL_IDENTITY
-                .service_slug
-                .starts_with("clash-verge-service")
-        );
-        assert!(
-            CHANNEL_IDENTITY
-                .windows_service_name
-                .starts_with("clash_verge_service")
-        );
+        assert!(CHANNEL_IDENTITY.service_slug.starts_with("clash-verge-service"));
+        assert!(CHANNEL_IDENTITY.windows_service_name.starts_with("clash_verge_service"));
         assert!(
             CHANNEL_IDENTITY
                 .macos_service_id

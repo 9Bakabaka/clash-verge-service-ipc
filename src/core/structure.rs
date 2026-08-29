@@ -50,11 +50,7 @@ impl ProtocolInfo {
         }
     }
 
-    pub const fn supports_client(
-        &self,
-        client: ProtocolVersion,
-        min_service_revision: u16,
-    ) -> bool {
+    pub const fn supports_client(&self, client: ProtocolVersion, min_service_revision: u16) -> bool {
         self.protocol.epoch == client.epoch
             && self.protocol.revision >= min_service_revision
             && client.revision >= self.min_client_revision
@@ -129,14 +125,8 @@ pub struct RuntimeBundle {
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum MacosProxyConfig {
     Disabled,
-    Global {
-        host: String,
-        port: u16,
-        bypass: String,
-    },
-    Pac {
-        url: String,
-    },
+    Global { host: String, port: u16, bypass: String },
+    Pac { url: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -328,8 +318,8 @@ impl<T> JsonConvert for T where T: Serialize + for<'de> Deserialize<'de> {}
 #[cfg(test)]
 mod tests {
     use super::{
-        MacosProxyConfig, OwnerIdentity, ProtocolInfo, ProtocolVersion, RuntimeBundle,
-        ServiceErrorCode, StartClashRequest, owner_key,
+        MacosProxyConfig, OwnerIdentity, ProtocolInfo, ProtocolVersion, RuntimeBundle, ServiceErrorCode,
+        StartClashRequest, owner_key,
     };
 
     #[test]
@@ -349,8 +339,7 @@ mod tests {
             }),
         };
         let encoded = serde_json::to_vec(&request).expect("request should serialize");
-        let decoded: StartClashRequest =
-            serde_json::from_slice(&encoded).expect("request should deserialize");
+        let decoded: StartClashRequest = serde_json::from_slice(&encoded).expect("request should deserialize");
         assert_eq!(decoded, request);
     }
 
@@ -366,10 +355,7 @@ mod tests {
     #[test]
     fn protocol_header_is_independent_from_the_build_version() {
         let current = ProtocolVersion::current();
-        assert_eq!(
-            ProtocolVersion::parse_header(&current.header_value()),
-            Some(current)
-        );
+        assert_eq!(ProtocolVersion::parse_header(&current.header_value()), Some(current));
         assert!(ProtocolVersion::parse_header(crate::VERSION).is_none());
     }
 
@@ -379,10 +365,7 @@ mod tests {
         older.protocol.revision = crate::MIN_SERVICE_REVISION_FOR_RUNTIME_STAGING - 1;
 
         assert!(
-            older.supports_client(
-                ProtocolVersion::current(),
-                crate::MIN_REQUIRED_SERVICE_REVISION
-            ),
+            older.supports_client(ProtocolVersion::current(), crate::MIN_REQUIRED_SERVICE_REVISION),
             "a service without staging is still a service this client can talk to"
         );
         assert!(

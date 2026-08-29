@@ -15,10 +15,7 @@ pub fn validate_proxy_config(config: &MacosProxyConfig) -> anyhow::Result<()> {
     match config {
         MacosProxyConfig::Disabled => Ok(()),
         MacosProxyConfig::Global { host, port, bypass } => {
-            ensure!(
-                host.len() <= MAX_HOST_LEN,
-                "proxy host exceeds {MAX_HOST_LEN} bytes"
-            );
+            ensure!(host.len() <= MAX_HOST_LEN, "proxy host exceeds {MAX_HOST_LEN} bytes");
             ensure!(
                 bypass.len() <= MAX_BYPASS_LEN,
                 "proxy bypass exceeds {MAX_BYPASS_LEN} bytes"
@@ -36,27 +33,15 @@ pub fn validate_proxy_config(config: &MacosProxyConfig) -> anyhow::Result<()> {
 }
 
 fn validate_pac_url(raw: &str) -> anyhow::Result<()> {
-    ensure!(
-        raw.len() <= MAX_PAC_URL_LEN,
-        "PAC URL exceeds {MAX_PAC_URL_LEN} bytes"
-    );
+    ensure!(raw.len() <= MAX_PAC_URL_LEN, "PAC URL exceeds {MAX_PAC_URL_LEN} bytes");
     ensure!(!raw.contains('\0'), "PAC URL contains NUL");
 
     let parsed = Url::parse(raw).context("invalid PAC URL")?;
     ensure!(parsed.scheme() == "http", "PAC URL scheme must be http");
-    ensure!(
-        parsed.username().is_empty(),
-        "PAC URL must not contain a username"
-    );
-    ensure!(
-        parsed.password().is_none(),
-        "PAC URL must not contain a password"
-    );
+    ensure!(parsed.username().is_empty(), "PAC URL must not contain a username");
+    ensure!(parsed.password().is_none(), "PAC URL must not contain a password");
     ensure!(parsed.query().is_none(), "PAC URL must not contain a query");
-    ensure!(
-        parsed.fragment().is_none(),
-        "PAC URL must not contain a fragment"
-    );
+    ensure!(parsed.fragment().is_none(), "PAC URL must not contain a fragment");
     ensure!(parsed.path() == PAC_PATH, "PAC URL path must be {PAC_PATH}");
 
     let authority = raw
@@ -64,20 +49,12 @@ fn validate_pac_url(raw: &str) -> anyhow::Result<()> {
         .map(|(_, remainder)| remainder)
         .and_then(|remainder| remainder.split(['/', '?', '#']).next())
         .context("PAC URL must contain an authority")?;
-    ensure!(
-        !authority.contains('@'),
-        "PAC URL must not contain userinfo"
-    );
-    ensure!(
-        explicit_port(authority)? != 0,
-        "PAC URL port must be nonzero"
-    );
+    ensure!(!authority.contains('@'), "PAC URL must not contain userinfo");
+    ensure!(explicit_port(authority)? != 0, "PAC URL port must be nonzero");
 
     let host = parsed.host().context("PAC URL must contain a host")?;
     ensure!(
-        parsed
-            .host_str()
-            .is_some_and(|host| host.len() <= MAX_HOST_LEN),
+        parsed.host_str().is_some_and(|host| host.len() <= MAX_HOST_LEN),
         "PAC URL host exceeds {MAX_HOST_LEN} bytes"
     );
     let is_loopback = match host {
@@ -107,10 +84,7 @@ fn explicit_port(authority: &str) -> anyhow::Result<u16> {
 #[cfg(target_os = "macos")]
 fn apply_real(config: &MacosProxyConfig) -> anyhow::Result<()> {
     let (system, auto) = match config {
-        MacosProxyConfig::Disabled => (
-            sysproxy::Sysproxy::default(),
-            sysproxy::Autoproxy::default(),
-        ),
+        MacosProxyConfig::Disabled => (sysproxy::Sysproxy::default(), sysproxy::Autoproxy::default()),
         MacosProxyConfig::Global { host, port, bypass } => (
             sysproxy::Sysproxy {
                 host: host.clone(),
@@ -148,13 +122,10 @@ fn apply_proxy_or_direct_with(
             let nothing_to_undo = is_no_active_network_service(&apply_error);
             match apply(&MacosProxyConfig::Disabled) {
                 Ok(()) => {}
-                Err(compensation_error)
-                    if nothing_to_undo && is_no_active_network_service(&compensation_error) => {}
+                Err(compensation_error) if nothing_to_undo && is_no_active_network_service(&compensation_error) => {}
                 Err(compensation_error) => {
                     return Err(compensation_error).with_context(|| {
-                        format!(
-                            "failed to compensate proxy apply failure ({apply_error}) with direct mode"
-                        )
+                        format!("failed to compensate proxy apply failure ({apply_error}) with direct mode")
                     });
                 }
             }
@@ -207,9 +178,7 @@ const fn is_no_active_network_service(_error: &anyhow::Error) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-pub async fn apply_proxy_or_direct(
-    config: Option<&MacosProxyConfig>,
-) -> anyhow::Result<ProxyApplyOutcome> {
+pub async fn apply_proxy_or_direct(config: Option<&MacosProxyConfig>) -> anyhow::Result<ProxyApplyOutcome> {
     let config = config.cloned();
     tokio::task::spawn_blocking(move || apply_proxy_or_direct_with(config.as_ref(), apply_real))
         .await
@@ -217,9 +186,7 @@ pub async fn apply_proxy_or_direct(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub async fn apply_proxy_or_direct(
-    config: Option<&MacosProxyConfig>,
-) -> anyhow::Result<ProxyApplyOutcome> {
+pub async fn apply_proxy_or_direct(config: Option<&MacosProxyConfig>) -> anyhow::Result<ProxyApplyOutcome> {
     match config {
         None => Ok(ProxyApplyOutcome::NotRequested),
         Some(_) => anyhow::bail!("macOS proxy configuration is unsupported on this platform"),
@@ -339,10 +306,7 @@ mod tests {
         ];
 
         for config in invalid {
-            assert!(
-                validate_proxy_config(&config).is_err(),
-                "accepted {config:?}"
-            );
+            assert!(validate_proxy_config(&config).is_err(), "accepted {config:?}");
         }
     }
 

@@ -2,8 +2,7 @@
 
 use anyhow::Result;
 use clash_verge_service_ipc::{
-    acquire_service_owner, reconcile_service_startup, restore_desired_state,
-    run_ipc_supervisor_until_shutdown,
+    acquire_service_owner, reconcile_service_startup, restore_desired_state, run_ipc_supervisor_until_shutdown,
 };
 use tracing::{Level, info, warn};
 use tracing_subscriber::FmtSubscriber;
@@ -12,10 +11,7 @@ use tracing_subscriber::FmtSubscriber;
 use {
     platform_lib::{
         define_windows_service,
-        service::{
-            ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
-            ServiceType,
-        },
+        service::{ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType},
         service_control_handler::{self, ServiceControlHandlerResult},
         service_dispatcher,
     },
@@ -42,12 +38,7 @@ fn set_secure_process_umask() {
 #[cfg(windows)]
 fn main() -> Result<()> {
     init_logger();
-    if service_dispatcher::start(
-        clash_verge_service_ipc::WINDOWS_SERVICE_NAME,
-        ffi_service_main,
-    )
-    .is_err()
-    {
+    if service_dispatcher::start(clash_verge_service_ipc::WINDOWS_SERVICE_NAME, ffi_service_main).is_err() {
         info!("Not running as a service, starting in standalone mode.");
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(run_standalone())?;
@@ -80,10 +71,8 @@ fn run_service() -> platform_lib::Result<()> {
         }
     };
 
-    let status_handle = service_control_handler::register(
-        clash_verge_service_ipc::WINDOWS_SERVICE_NAME,
-        event_handler,
-    )?;
+    let status_handle =
+        service_control_handler::register(clash_verge_service_ipc::WINDOWS_SERVICE_NAME, event_handler)?;
 
     status_handle.set_service_status(ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
@@ -183,9 +172,9 @@ async fn run_standalone() -> Result<()> {
                 );
             }
         }
-        Err(error) => warn!(
-            "Service startup reconciliation failed; core starts remain blocked while IPC is available: {error:#}"
-        ),
+        Err(error) => {
+            warn!("Service startup reconciliation failed; core starts remain blocked while IPC is available: {error:#}")
+        }
     }
 
     run_ipc_supervisor_until_shutdown(shutdown_signal()).await?;
@@ -199,8 +188,7 @@ async fn shutdown_signal() {
     {
         use tokio::signal::unix::{SignalKind, signal};
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
 
         tokio::select! {
             _ = sigint.recv() => info!("Received SIGINT (Ctrl+C)"),
@@ -210,9 +198,7 @@ async fn shutdown_signal() {
 
     #[cfg(windows)]
     {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
+        tokio::signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
         info!("Received Ctrl+C");
     }
 }

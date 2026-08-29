@@ -1,8 +1,6 @@
 use crate::core::auth::{AuthenticatedOwner, ServiceError};
 use crate::core::paths::ensure_owner_state_directory;
-use crate::{
-    ClashConfig, CoreConfig, RuntimeBundle, ServiceErrorCode, WriterConfig, mihomo_ipc_path,
-};
+use crate::{ClashConfig, CoreConfig, RuntimeBundle, ServiceErrorCode, WriterConfig, mihomo_ipc_path};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -65,10 +63,7 @@ async fn inspect_path(path: &Path) -> String {
     }
 }
 
-async fn snapshot_stale_runtime_directories(
-    owner_root: &Path,
-    active_runtime: &Path,
-) -> Vec<PathBuf> {
+async fn snapshot_stale_runtime_directories(owner_root: &Path, active_runtime: &Path) -> Vec<PathBuf> {
     let mut stale_paths = Vec::new();
     let mut entries = match tokio::fs::read_dir(owner_root).await {
         Ok(entries) => entries,
@@ -115,9 +110,7 @@ async fn snapshot_stale_runtime_directories(
 
 async fn cleanup_stale_runtime_directories(stale_paths: Vec<PathBuf>, active_runtime: PathBuf) {
     for path in stale_paths {
-        if let Err(error) =
-            remove_runtime_directory(&path, "failed to remove stale runtime directory").await
-        {
+        if let Err(error) = remove_runtime_directory(&path, "failed to remove stale runtime directory").await {
             let state = inspect_path(&path).await;
             tracing::warn!(
                 path = ?path,
@@ -158,14 +151,11 @@ async fn remove_runtime_directory(path: &Path, operation: &str) -> std::io::Resu
 /// Returns a bounded retry delay for Windows errors caused by live file handles.
 /// Mapped files are included so callers eventually fall back to restarting the core.
 #[cfg(windows)]
-pub(super) fn runtime_cleanup_retry_delay(
-    error: &std::io::Error,
-    retry_index: usize,
-) -> Option<Duration> {
+pub(super) fn runtime_cleanup_retry_delay(error: &std::io::Error, retry_index: usize) -> Option<Duration> {
     use windows_sys::Win32::Foundation::{
         ERROR_ACCESS_DENIED, ERROR_DELETE_PENDING, ERROR_DIR_NOT_EMPTY, ERROR_SHARING_VIOLATION,
-        ERROR_UNABLE_TO_MOVE_REPLACEMENT, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2,
-        ERROR_UNABLE_TO_REMOVE_REPLACED, ERROR_USER_MAPPED_FILE,
+        ERROR_UNABLE_TO_MOVE_REPLACEMENT, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2, ERROR_UNABLE_TO_REMOVE_REPLACED,
+        ERROR_USER_MAPPED_FILE,
     };
 
     matches!(
@@ -185,10 +175,7 @@ pub(super) fn runtime_cleanup_retry_delay(
 }
 
 #[cfg(not(windows))]
-pub(super) fn runtime_cleanup_retry_delay(
-    _error: &std::io::Error,
-    _retry_index: usize,
-) -> Option<Duration> {
+pub(super) fn runtime_cleanup_retry_delay(_error: &std::io::Error, _retry_index: usize) -> Option<Duration> {
     None
 }
 
@@ -196,11 +183,9 @@ pub(super) fn runtime_cleanup_retry_delay(
 /// Reuse preserves core-owned state such as `cache.db` selections and fake-IP leases.
 async fn ensure_runtime_generation(owner_root: &Path) -> Result<PathBuf, ServiceError> {
     let runtime = owner_root.join(RUNTIME_GENERATION_DIRECTORY_NAME);
-    tokio::fs::create_dir_all(&runtime).await.map_err(|error| {
-        invalid_asset(format!(
-            "failed to create runtime generation {runtime:?}: {error}"
-        ))
-    })?;
+    tokio::fs::create_dir_all(&runtime)
+        .await
+        .map_err(|error| invalid_asset(format!("failed to create runtime generation {runtime:?}: {error}")))?;
     set_private_directory_permissions(&runtime).await?;
     Ok(runtime)
 }
@@ -234,10 +219,7 @@ pub(crate) async fn prepare_runtime(
             core_config: CoreConfig {
                 core_path: core_path.to_string_lossy().into_owned(),
                 core_ipc_path: mihomo_ipc_path(&owner.identity),
-                config_path: runtime
-                    .join(RUNTIME_CONFIG_FILE_NAME)
-                    .to_string_lossy()
-                    .into_owned(),
+                config_path: runtime.join(RUNTIME_CONFIG_FILE_NAME).to_string_lossy().into_owned(),
                 config_dir: runtime.to_string_lossy().into_owned(),
             },
             log_config,
@@ -262,15 +244,13 @@ async fn plan_runtime_refresh(
     let gathered = gather_bundle(owner, bundle, core_path).await?;
     // A corrupt manifest must not prevent the restart that staging uses as its fallback.
     // Treat it as untrusted: copy everything and sweep nothing.
-    let previous = super::staging::read_manifest(runtime)
-        .await
-        .unwrap_or_else(|detail| {
-            tracing::warn!(
-                detail = %detail,
-                "Rebuilding the runtime generation from nothing: its manifest could not be read"
-            );
-            super::staging::RuntimeManifest::default()
-        });
+    let previous = super::staging::read_manifest(runtime).await.unwrap_or_else(|detail| {
+        tracing::warn!(
+            detail = %detail,
+            "Rebuilding the runtime generation from nothing: its manifest could not be read"
+        );
+        super::staging::RuntimeManifest::default()
+    });
     Ok(super::staging::plan_stage(
         &previous,
         &gathered.sources,
@@ -279,22 +259,14 @@ async fn plan_runtime_refresh(
 }
 
 /// Applies a plan, committing `config.yaml` last so partial failure leaves the old configuration.
-async fn materialize_plan(
-    runtime: &Path,
-    plan: &super::staging::StagePlan,
-    yaml: &str,
-) -> Result<(), ServiceError> {
+async fn materialize_plan(runtime: &Path, plan: &super::staging::StagePlan, yaml: &str) -> Result<(), ServiceError> {
     // Do not record a source that changed while it was copied.
     let mut manifest = plan.manifest.clone();
     for destination in &plan.required_deletes {
         let target = resolve_in_generation(runtime, destination)?;
         super::staging::remove_staged_file(&target)
             .await
-            .map_err(|error| {
-                invalid_asset(format!(
-                    "failed to discard the stale cache {destination}: {error}"
-                ))
-            })?;
+            .map_err(|error| invalid_asset(format!("failed to discard the stale cache {destination}: {error}")))?;
     }
 
     for copy in &plan.copies {
@@ -319,14 +291,11 @@ async fn materialize_plan(
     }
 
     let config_path = runtime.join(RUNTIME_CONFIG_FILE_NAME);
-    if let Err(error) =
-        super::staging::commit_staged_config(runtime, &config_path, yaml, &manifest).await
-    {
+    if let Err(error) = super::staging::commit_staged_config(runtime, &config_path, yaml, &manifest).await {
         // A manifest written before a failed config commit may claim cache provenance for a URL
         // the core never loaded; discard it rather than trust stale provider data next time.
         if let Err(discard) =
-            super::staging::remove_staged_file(&runtime.join(super::staging::MANIFEST_FILE_NAME))
-                .await
+            super::staging::remove_staged_file(&runtime.join(super::staging::MANIFEST_FILE_NAME)).await
         {
             tracing::warn!(
                 error = %discard,
@@ -384,11 +353,9 @@ pub(super) async fn gather_bundle(
     for asset in &bundle.assets {
         let source = validate_source(owner, app_bundle_root.as_deref(), &asset.source)?;
         let destination = destination_key(&validate_destination(&asset.destination)?)?;
-        let metadata = tokio::fs::metadata(&source).await.map_err(|error| {
-            invalid_asset(format!(
-                "failed to inspect runtime asset {source:?}: {error}"
-            ))
-        })?;
+        let metadata = tokio::fs::metadata(&source)
+            .await
+            .map_err(|error| invalid_asset(format!("failed to inspect runtime asset {source:?}: {error}")))?;
         if !asset_keys.insert(destination.clone()) {
             return Err(invalid_asset(format!(
                 "runtime destination {destination:?} is declared as a copied asset twice"
@@ -407,10 +374,7 @@ pub(super) async fn gather_bundle(
     Ok(GatheredBundle { sources, remote })
 }
 
-pub(super) fn validate_core_path(
-    owner: &AuthenticatedOwner,
-    core_path: &str,
-) -> Result<PathBuf, ServiceError> {
+pub(super) fn validate_core_path(owner: &AuthenticatedOwner, core_path: &str) -> Result<PathBuf, ServiceError> {
     let requested = Path::new(core_path);
     let canonical = canonical_regular_file(requested, "core")?;
 
@@ -422,8 +386,8 @@ pub(super) fn validate_core_path(
                 .then(|| path.parent().map(|home| home.join("Applications")))
                 .flatten()
         });
-        let allowed = cfg!(feature = "test")
-            || is_permitted_macos_core_location(&canonical, home_applications.as_deref());
+        let allowed =
+            cfg!(feature = "test") || is_permitted_macos_core_location(&canonical, home_applications.as_deref());
         if !allowed {
             return Err(ServiceError::new(
                 ServiceErrorCode::InvalidInstallLocation,
@@ -441,8 +405,7 @@ pub(super) fn validate_core_path(
 /// Checks the production macOS rule that cores live in a protected Applications directory.
 #[cfg(target_os = "macos")]
 fn is_permitted_macos_core_location(canonical: &Path, home_applications: Option<&Path>) -> bool {
-    canonical.starts_with("/Applications")
-        || home_applications.is_some_and(|root| canonical.starts_with(root))
+    canonical.starts_with("/Applications") || home_applications.is_some_and(|root| canonical.starts_with(root))
 }
 
 pub(super) fn validate_source(
@@ -457,8 +420,7 @@ pub(super) fn validate_source(
             "runtime asset path contains a symlink or non-canonical component",
         ));
     }
-    if !canonical.starts_with(&owner.app_data_root)
-        && !app_bundle_root.is_some_and(|root| canonical.starts_with(root))
+    if !canonical.starts_with(&owner.app_data_root) && !app_bundle_root.is_some_and(|root| canonical.starts_with(root))
     {
         return Err(invalid_asset(
             "runtime asset is outside the authenticated application roots",
@@ -471,13 +433,12 @@ fn canonical_regular_file(path: &Path, label: &str) -> Result<PathBuf, ServiceEr
     if !path.is_absolute() {
         return Err(invalid_asset(format!("{label} path must be absolute")));
     }
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|error| invalid_asset(format!("{label} is unavailable: {error}")))?;
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|error| invalid_asset(format!("{label} is unavailable: {error}")))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(invalid_asset(format!("{label} must be an ordinary file")));
     }
-    std::fs::canonicalize(path)
-        .map_err(|error| invalid_asset(format!("failed to canonicalize {label}: {error}")))
+    std::fs::canonicalize(path).map_err(|error| invalid_asset(format!("failed to canonicalize {label}: {error}")))
 }
 
 pub(super) fn validate_destination(destination: &str) -> Result<PathBuf, ServiceError> {
@@ -549,10 +510,7 @@ fn is_staging_temporary(name: &str) -> bool {
 }
 
 /// Resolves an untrusted bundle or manifest destination inside `generation`.
-pub(super) fn resolve_in_generation(
-    generation: &Path,
-    destination: &str,
-) -> Result<PathBuf, ServiceError> {
+pub(super) fn resolve_in_generation(generation: &Path, destination: &str) -> Result<PathBuf, ServiceError> {
     let key = destination_key(&validate_destination(destination)?)?;
     Ok(generation.join(key))
 }
@@ -582,19 +540,12 @@ async fn set_private_directory_permissions(path: &Path) -> Result<(), ServiceErr
         use std::os::unix::fs::PermissionsExt as _;
         tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
             .await
-            .map_err(|error| {
-                invalid_asset(format!(
-                    "failed to secure owner directory {path:?}: {error}"
-                ))
-            })?;
+            .map_err(|error| invalid_asset(format!("failed to secure owner directory {path:?}: {error}")))?;
     }
 
     #[cfg(windows)]
-    crate::core::windows_security::secure_private_directory(path).map_err(|error| {
-        invalid_asset(format!(
-            "failed to secure owner directory {path:?}: {error:#}"
-        ))
-    })?;
+    crate::core::windows_security::secure_private_directory(path)
+        .map_err(|error| invalid_asset(format!("failed to secure owner directory {path:?}: {error:#}")))?;
 
     Ok(())
 }
@@ -611,16 +562,13 @@ async fn prepare_owner_ipc_directory(owner: &AuthenticatedOwner) -> Result<(), S
         let users_directory = directory
             .parent()
             .ok_or_else(|| invalid_asset("owner IPC directory has no users root"))?;
-        crate::core::unix_security::ensure_service_directory(users_directory, 0o755).map_err(
-            |error| invalid_asset(format!("failed to secure IPC users directory: {error:#}")),
-        )?;
+        crate::core::unix_security::ensure_service_directory(users_directory, 0o755)
+            .map_err(|error| invalid_asset(format!("failed to secure IPC users directory: {error:#}")))?;
         match std::fs::create_dir(directory) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => {
-                return Err(invalid_asset(format!(
-                    "failed to create owner IPC directory: {error}"
-                )));
+                return Err(invalid_asset(format!("failed to create owner IPC directory: {error}")));
             }
         }
         let directory = std::ffi::CString::new(directory.as_os_str().as_bytes())
@@ -645,27 +593,18 @@ async fn prepare_owner_ipc_directory(owner: &AuthenticatedOwner) -> Result<(), S
         let inspected = unsafe { platform_lib::fstat(fd, &mut stat) } == 0;
         let effective_uid = unsafe { platform_lib::geteuid() };
         let test_process_owned = cfg!(feature = "test") && stat.st_uid == effective_uid;
-        if !owner_ipc_directory_is_usable(
-            inspected,
-            stat.st_mode,
-            stat.st_uid,
-            uid,
-            test_process_owned,
-        ) {
+        if !owner_ipc_directory_is_usable(inspected, stat.st_mode, stat.st_uid, uid, test_process_owned) {
             unsafe { platform_lib::close(fd) };
             return Err(invalid_asset(
                 "owner IPC directory has an unexpected owner or file type",
             ));
         }
-        let chown_ok = unsafe { platform_lib::geteuid() } != 0
-            || unsafe { platform_lib::fchown(fd, 0, 0) } == 0;
+        let chown_ok = unsafe { platform_lib::geteuid() } != 0 || unsafe { platform_lib::fchown(fd, 0, 0) } == 0;
         let chmod_ok = unsafe { platform_lib::fchmod(fd, 0o700 as platform_lib::mode_t) } == 0;
         let os_error = (!chown_ok || !chmod_ok).then(std::io::Error::last_os_error);
         unsafe { platform_lib::close(fd) };
         if let Some(error) = os_error {
-            return Err(invalid_asset(format!(
-                "failed to secure owner IPC directory: {error}"
-            )));
+            return Err(invalid_asset(format!("failed to secure owner IPC directory: {error}")));
         }
     }
 
@@ -857,8 +796,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn materializes_yaml_and_assets_below_owner_runtime() -> anyhow::Result<()> {
-        let app_root =
-            std::env::temp_dir().join(format!("service-runtime-assets-{}", std::process::id()));
+        let app_root = std::env::temp_dir().join(format!("service-runtime-assets-{}", std::process::id()));
         std::fs::create_dir_all(app_root.join("providers"))?;
         std::fs::write(app_root.join("providers/source.yaml"), b"proxies: []\n")?;
         std::fs::write(app_root.join("mihomo"), b"mock core")?;
@@ -885,8 +823,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read(
-                std::path::Path::new(&prepared.clash_config.core_config.config_dir)
-                    .join("providers/copied.yaml")
+                std::path::Path::new(&prepared.clash_config.core_config.config_dir).join("providers/copied.yaml")
             )?,
             b"proxies: []\n"
         );
@@ -897,10 +834,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn prepared_assets_survive_legacy_source_cleanup() -> anyhow::Result<()> {
-        let app_root = std::env::temp_dir().join(format!(
-            "service-runtime-cleanup-order-{}",
-            std::process::id()
-        ));
+        let app_root = std::env::temp_dir().join(format!("service-runtime-cleanup-order-{}", std::process::id()));
         let source = app_root.join("legacy-provider.yaml");
         std::fs::create_dir_all(&app_root)?;
         std::fs::write(&source, b"proxies: []\n")?;
@@ -922,8 +856,7 @@ mod tests {
 
         assert_eq!(
             std::fs::read(
-                std::path::Path::new(&prepared.clash_config.core_config.config_dir)
-                    .join("providers/copied.yaml")
+                std::path::Path::new(&prepared.clash_config.core_config.config_dir).join("providers/copied.yaml")
             )?,
             b"proxies: []\n"
         );
@@ -934,8 +867,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn rejects_traversal_without_replacing_existing_runtime() -> anyhow::Result<()> {
-        let app_root =
-            std::env::temp_dir().join(format!("service-runtime-traversal-{}", std::process::id()));
+        let app_root = std::env::temp_dir().join(format!("service-runtime-traversal-{}", std::process::id()));
         std::fs::create_dir_all(&app_root)?;
         std::fs::write(app_root.join("asset"), b"safe")?;
         std::fs::write(app_root.join("mihomo"), b"mock core")?;
@@ -950,11 +882,7 @@ mod tests {
         let invalid = RuntimeBundle {
             yaml: "mode: global\n".to_string(),
             assets: vec![RuntimeAsset {
-                source: owner
-                    .app_data_root
-                    .join("asset")
-                    .to_string_lossy()
-                    .into_owned(),
+                source: owner.app_data_root.join("asset").to_string_lossy().into_owned(),
                 destination: "../escape".to_string(),
             }],
             remote_providers: Vec::new(),
@@ -983,8 +911,7 @@ mod tests {
     #[serial]
     async fn a_restart_keeps_the_state_the_core_wrote_for_itself() -> anyhow::Result<()> {
         // `cache.db` contains selections and must survive service-driven restarts.
-        let app_root =
-            std::env::temp_dir().join(format!("service-runtime-cachedb-{}", std::process::id()));
+        let app_root = std::env::temp_dir().join(format!("service-runtime-cachedb-{}", std::process::id()));
         std::fs::create_dir_all(&app_root)?;
         std::fs::write(app_root.join("mihomo"), b"mock core")?;
         let owner = test_owner(std::fs::canonicalize(&app_root)?);
@@ -1017,10 +944,7 @@ mod tests {
     #[serial]
     async fn a_rejected_bundle_keeps_the_state_the_core_wrote_for_itself() -> anyhow::Result<()> {
         // Rejecting a bundle must not delete core-owned state from the durable generation.
-        let app_root = std::env::temp_dir().join(format!(
-            "service-runtime-cachedb-reject-{}",
-            std::process::id()
-        ));
+        let app_root = std::env::temp_dir().join(format!("service-runtime-cachedb-reject-{}", std::process::id()));
         std::fs::create_dir_all(&app_root)?;
         std::fs::write(app_root.join("asset"), b"safe")?;
         std::fs::write(app_root.join("mihomo"), b"mock core")?;
@@ -1037,11 +961,7 @@ mod tests {
         let invalid = RuntimeBundle {
             yaml: "mode: global\n".to_string(),
             assets: vec![RuntimeAsset {
-                source: owner
-                    .app_data_root
-                    .join("asset")
-                    .to_string_lossy()
-                    .into_owned(),
+                source: owner.app_data_root.join("asset").to_string_lossy().into_owned(),
                 destination: "../escape".to_string(),
             }],
             remote_providers: Vec::new(),
@@ -1051,10 +971,7 @@ mod tests {
             .await
             .expect_err("traversal must fail");
 
-        assert_eq!(
-            std::fs::read(core_owned_state(&prepared))?,
-            b"the node the user picked"
-        );
+        assert_eq!(std::fs::read(core_owned_state(&prepared))?, b"the node the user picked");
         std::fs::remove_dir_all(app_root)?;
         Ok(())
     }
@@ -1063,8 +980,7 @@ mod tests {
     #[serial]
     async fn planning_a_start_writes_nothing_into_the_generation() -> anyhow::Result<()> {
         // Planning runs while the outgoing core may still hold generation files open.
-        let app_root =
-            std::env::temp_dir().join(format!("service-runtime-planonly-{}", std::process::id()));
+        let app_root = std::env::temp_dir().join(format!("service-runtime-planonly-{}", std::process::id()));
         std::fs::create_dir_all(&app_root)?;
         std::fs::write(app_root.join("asset"), b"new asset")?;
         std::fs::write(app_root.join("mihomo"), b"mock core")?;
@@ -1081,11 +997,7 @@ mod tests {
         let candidate = RuntimeBundle {
             yaml: "mode: global\n".to_string(),
             assets: vec![RuntimeAsset {
-                source: owner
-                    .app_data_root
-                    .join("asset")
-                    .to_string_lossy()
-                    .into_owned(),
+                source: owner.app_data_root.join("asset").to_string_lossy().into_owned(),
                 destination: "providers/new.yaml".to_string(),
             }],
             remote_providers: Vec::new(),
@@ -1117,20 +1029,14 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn planning_a_start_does_not_replace_an_asset_the_running_core_holds()
-    -> anyhow::Result<()> {
+    async fn planning_a_start_does_not_replace_an_asset_the_running_core_holds() -> anyhow::Result<()> {
         // Existing destinations may be memory-mapped by the outgoing core on Windows.
-        let app_root =
-            std::env::temp_dir().join(format!("service-runtime-planonly-{}", std::process::id()));
+        let app_root = std::env::temp_dir().join(format!("service-runtime-planonly-{}", std::process::id()));
         std::fs::create_dir_all(&app_root)?;
         std::fs::write(app_root.join("provider.yaml"), b"first\n")?;
         std::fs::write(app_root.join("mihomo"), b"mock core")?;
         let owner = test_owner(std::fs::canonicalize(&app_root)?);
-        let asset = owner
-            .app_data_root
-            .join("provider.yaml")
-            .to_string_lossy()
-            .into_owned();
+        let asset = owner.app_data_root.join("provider.yaml").to_string_lossy().into_owned();
         let running = RuntimeBundle {
             yaml: "mode: rule\n".to_string(),
             assets: vec![RuntimeAsset {
@@ -1167,10 +1073,7 @@ mod tests {
             std::fs::read_to_string(&live.clash_config.core_config.config_path)?,
             "mode: global\n"
         );
-        assert_eq!(
-            std::fs::read(generation.join("providers/one.yaml"))?,
-            b"second\n"
-        );
+        assert_eq!(std::fs::read(generation.join("providers/one.yaml"))?, b"second\n");
         std::fs::remove_dir_all(app_root)?;
         Ok(())
     }
@@ -1179,8 +1082,7 @@ mod tests {
     #[serial]
     async fn an_unreadable_manifest_rebuilds_rather_than_refusing_to_start() -> anyhow::Result<()> {
         // Restart is staging's fallback, so corrupt bookkeeping cannot also block start.
-        let app_root =
-            std::env::temp_dir().join(format!("service-runtime-manifest-{}", std::process::id()));
+        let app_root = std::env::temp_dir().join(format!("service-runtime-manifest-{}", std::process::id()));
         std::fs::create_dir_all(&app_root)?;
         std::fs::write(app_root.join("provider.yaml"), b"proxies: []\n")?;
         std::fs::write(app_root.join("mihomo"), b"mock core")?;
@@ -1188,11 +1090,7 @@ mod tests {
         let bundle = RuntimeBundle {
             yaml: "mode: rule\n".to_string(),
             assets: vec![RuntimeAsset {
-                source: owner
-                    .app_data_root
-                    .join("provider.yaml")
-                    .to_string_lossy()
-                    .into_owned(),
+                source: owner.app_data_root.join("provider.yaml").to_string_lossy().into_owned(),
                 destination: "providers/one.yaml".to_string(),
             }],
             remote_providers: Vec::new(),
@@ -1231,8 +1129,7 @@ mod tests {
     #[serial]
     async fn a_destination_the_manifest_omits_is_copied_again() -> anyhow::Result<()> {
         // Simulate the manifest omission produced when a source changes during its copy.
-        let app_root =
-            std::env::temp_dir().join(format!("service-runtime-omitted-{}", std::process::id()));
+        let app_root = std::env::temp_dir().join(format!("service-runtime-omitted-{}", std::process::id()));
         std::fs::create_dir_all(&app_root)?;
         std::fs::write(app_root.join("geo.dat"), b"geo bytes")?;
         std::fs::write(app_root.join("mihomo"), b"mock core")?;
@@ -1240,11 +1137,7 @@ mod tests {
         let bundle = RuntimeBundle {
             yaml: "mode: rule\n".to_string(),
             assets: vec![RuntimeAsset {
-                source: owner
-                    .app_data_root
-                    .join("geo.dat")
-                    .to_string_lossy()
-                    .into_owned(),
+                source: owner.app_data_root.join("geo.dat").to_string_lossy().into_owned(),
                 destination: "geo.dat".to_string(),
             }],
             remote_providers: Vec::new(),
@@ -1279,8 +1172,7 @@ mod tests {
     #[serial]
     async fn a_bundle_this_service_will_not_accept_changes_nothing() -> anyhow::Result<()> {
         // Validation must finish before any generation file changes.
-        let app_root =
-            std::env::temp_dir().join(format!("service-runtime-atomic-{}", std::process::id()));
+        let app_root = std::env::temp_dir().join(format!("service-runtime-atomic-{}", std::process::id()));
         std::fs::create_dir_all(&app_root)?;
         std::fs::write(app_root.join("first"), b"first asset")?;
         std::fs::write(app_root.join("mihomo"), b"mock core")?;

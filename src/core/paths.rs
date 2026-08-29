@@ -186,8 +186,7 @@ fn windows_program_data() -> Option<PathBuf> {
     use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
 
     let mut raw = std::ptr::null_mut();
-    let status =
-        unsafe { SHGetKnownFolderPath(&FOLDERID_ProgramData, 0, std::ptr::null_mut(), &mut raw) };
+    let status = unsafe { SHGetKnownFolderPath(&FOLDERID_ProgramData, 0, std::ptr::null_mut(), &mut raw) };
     if status < 0 || raw.is_null() {
         return None;
     }
@@ -221,11 +220,7 @@ pub fn mihomo_ipc_path(identity: &OwnerIdentity) -> String {
                 } else {
                     crate::CHANNEL_IDENTITY.id
                 };
-                format!(
-                    r"\\.\pipe\verge-mihomo-{}-{}",
-                    channel_id,
-                    owner_key(identity)
-                )
+                format!(r"\\.\pipe\verge-mihomo-{}-{}", channel_id, owner_key(identity))
             }
 
             #[cfg(unix)]
@@ -246,11 +241,7 @@ pub fn mihomo_ipc_path(identity: &OwnerIdentity) -> String {
             } else {
                 crate::CHANNEL_IDENTITY.id
             };
-            format!(
-                r"\\.\pipe\verge-mihomo-{}-{}",
-                channel_id,
-                owner_key(identity)
-            )
+            format!(r"\\.\pipe\verge-mihomo-{}-{}", channel_id, owner_key(identity))
         }
     }
 }
@@ -282,10 +273,7 @@ mod tests {
         let owner = paths.for_owner(&OwnerIdentity::Unix { uid: 501, gid: 20 });
 
         assert!(owner.root().ends_with("users/501"));
-        assert_eq!(
-            owner.desired_state_path(),
-            owner.root().join("desired-state.json")
-        );
+        assert_eq!(owner.desired_state_path(), owner.root().join("desired-state.json"));
         assert_eq!(owner.runtime_dir(), owner.root().join("runtime"));
         assert_eq!(owner.logs_dir(), owner.root().join("logs"));
         assert_eq!(

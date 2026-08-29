@@ -4,10 +4,9 @@ mod common;
 
 use anyhow::{Context as _, Result};
 use clash_verge_service_ipc::{
-    CoreWatchdogTestConfig, OwnerSessionProof, RuntimeBundle, ServiceLifecycleState,
-    StartClashRequest, connect, get_status, run_ipc_server, run_ipc_supervisor_until_shutdown,
-    service_lifecycle_state, set_core_watchdog_config_for_tests, start_clash, stop_clash,
-    stop_ipc_server,
+    CoreWatchdogTestConfig, OwnerSessionProof, RuntimeBundle, ServiceLifecycleState, StartClashRequest, connect,
+    get_status, run_ipc_server, run_ipc_supervisor_until_shutdown, service_lifecycle_state,
+    set_core_watchdog_config_for_tests, start_clash, stop_clash, stop_ipc_server,
 };
 use serial_test::serial;
 use std::time::{Duration, Instant};
@@ -99,9 +98,7 @@ async fn core_watchdog_stops_a_bounded_crash_loop() -> Result<()> {
                 yaml: "mode: rule\n".to_owned(),
                 assets: Vec::new(),
                 remote_providers: Vec::new(),
-                core_path: common::test_bin_path("crash_binary")
-                    .to_string_lossy()
-                    .into_owned(),
+                core_path: common::test_bin_path("crash_binary").to_string_lossy().into_owned(),
             },
             proposed_session_token: token.clone(),
             macos_proxy: None,
@@ -110,11 +107,7 @@ async fn core_watchdog_stops_a_bounded_crash_loop() -> Result<()> {
     .await?;
     anyhow::ensure!(response.code == 0, "{}", response.message);
     let session = OwnerSessionProof {
-        generation: response
-            .data
-            .context("start omitted its result")?
-            .session
-            .generation,
+        generation: response.data.context("start omitted its result")?.session.generation,
         token,
     };
 

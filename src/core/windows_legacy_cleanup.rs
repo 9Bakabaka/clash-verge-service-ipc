@@ -2,43 +2,31 @@ use crate::ServiceErrorCode;
 use crate::core::auth::ServiceError;
 use std::os::windows::ffi::OsStrExt as _;
 use std::path::Path;
-use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_DIR_NOT_EMPTY, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
-};
+use windows_sys::Win32::Foundation::{CloseHandle, ERROR_DIR_NOT_EMPTY, HANDLE, INVALID_HANDLE_VALUE, LocalFree};
 use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
 use windows_sys::Win32::Security::{
-    CreateWellKnownSid, EqualSid, OWNER_SECURITY_INFORMATION, SECURITY_MAX_SID_SIZE,
-    WinLocalSystemSid,
+    CreateWellKnownSid, EqualSid, OWNER_SECURITY_INFORMATION, SECURITY_MAX_SID_SIZE, WinLocalSystemSid,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, CreateFileW, DELETE, FILE_ATTRIBUTE_DIRECTORY,
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TYPE_DISK, FileDispositionInfo,
-    GetFileInformationByHandle, GetFileType, GetFinalPathNameByHandleW, OPEN_EXISTING,
-    READ_CONTROL, SetFileInformationByHandle,
+    BY_HANDLE_FILE_INFORMATION, CreateFileW, DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY,
+    FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TYPE_DISK, FileDispositionInfo,
+    GetFileInformationByHandle, GetFileType, GetFinalPathNameByHandleW, OPEN_EXISTING, READ_CONTROL,
+    SetFileInformationByHandle,
 };
 
 pub(crate) fn cleanup_system_owned_entries(root: &Path) -> Result<(), ServiceError> {
-    let root_handle = open_entry(root).map_err(|error| {
-        cleanup_error(format!(
-            "failed to open application data root {root:?}: {error}"
-        ))
-    })?;
+    let root_handle = open_entry(root)
+        .map_err(|error| cleanup_error(format!("failed to open application data root {root:?}: {error}")))?;
     let root_path = final_path(root_handle.0)?;
     cleanup_directory(root, &root_path)
 }
 
 fn cleanup_directory(path: &Path, root_path: &str) -> Result<(), ServiceError> {
-    let entries = std::fs::read_dir(path).map_err(|error| {
-        cleanup_error(format!(
-            "failed to enumerate legacy directory {path:?}: {error}"
-        ))
-    })?;
+    let entries = std::fs::read_dir(path)
+        .map_err(|error| cleanup_error(format!("failed to enumerate legacy directory {path:?}: {error}")))?;
     for entry in entries {
-        let entry = entry.map_err(|error| {
-            cleanup_error(format!("failed to read legacy directory entry: {error}"))
-        })?;
+        let entry = entry.map_err(|error| cleanup_error(format!("failed to read legacy directory entry: {error}")))?;
         cleanup_entry(&entry.path(), root_path)?;
     }
     Ok(())
@@ -49,16 +37,12 @@ fn cleanup_entry(path: &Path, root_path: &str) -> Result<(), ServiceError> {
         Ok(handle) => handle,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => {
-            return Err(cleanup_error(format!(
-                "failed to open legacy entry {path:?}: {error}"
-            )));
+            return Err(cleanup_error(format!("failed to open legacy entry {path:?}: {error}")));
         }
     };
     let opened_path = final_path(handle.0)?;
     if !path_is_below_root(root_path, &opened_path) {
-        return Err(cleanup_error(
-            "legacy entry escaped the authenticated application root",
-        ));
+        return Err(cleanup_error("legacy entry escaped the authenticated application root"));
     }
 
     let information = handle_information(handle.0)?;
@@ -117,9 +101,7 @@ fn handle_information(handle: HANDLE) -> Result<BY_HANDLE_FILE_INFORMATION, Serv
 fn final_path(handle: HANDLE) -> Result<String, ServiceError> {
     let mut buffer = vec![0_u16; 512];
     loop {
-        let length = unsafe {
-            GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), buffer.len() as u32, 0)
-        } as usize;
+        let length = unsafe { GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), buffer.len() as u32, 0) } as usize;
         if length == 0 {
             return Err(cleanup_error(format!(
                 "failed to resolve legacy entry handle: {}",

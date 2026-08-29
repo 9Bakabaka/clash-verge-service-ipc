@@ -4,16 +4,13 @@ use crate::core::paths::service_paths;
 #[cfg(unix)]
 use tracing::{info, warn};
 
-pub(crate) async fn cleanup_legacy_owner_files(
-    owner: &AuthenticatedOwner,
-) -> Result<(), ServiceError> {
+pub(crate) async fn cleanup_legacy_owner_files(owner: &AuthenticatedOwner) -> Result<(), ServiceError> {
     let marker = service_paths()
         .for_owner(&owner.identity)
         .root()
         .join("legacy-cleanup-v1");
-    crate::core::paths::ensure_owner_state_directory(&owner.identity).map_err(|error| {
-        cleanup_error(format!("failed to secure cleanup marker root: {error:#}"))
-    })?;
+    crate::core::paths::ensure_owner_state_directory(&owner.identity)
+        .map_err(|error| cleanup_error(format!("failed to secure cleanup marker root: {error:#}")))?;
     if marker.is_file() {
         return Ok(());
     }
@@ -34,11 +31,9 @@ pub(crate) async fn cleanup_legacy_owner_files(
     #[cfg(windows)]
     {
         let root = owner.app_data_root.clone();
-        tokio::task::spawn_blocking(move || {
-            crate::core::windows_legacy_cleanup::cleanup_system_owned_entries(&root)
-        })
-        .await
-        .map_err(|error| cleanup_error(format!("legacy cleanup task failed: {error}")))??;
+        tokio::task::spawn_blocking(move || crate::core::windows_legacy_cleanup::cleanup_system_owned_entries(&root))
+            .await
+            .map_err(|error| cleanup_error(format!("legacy cleanup task failed: {error}")))??;
     }
 
     tokio::fs::write(&marker, b"ok\n")
@@ -56,10 +51,7 @@ fn cleanup_root_owned_entries(root: &std::path::Path) -> Result<(), ServiceError
     let fd = unsafe {
         platform_lib::open(
             path.as_ptr(),
-            platform_lib::O_RDONLY
-                | platform_lib::O_DIRECTORY
-                | platform_lib::O_NOFOLLOW
-                | platform_lib::O_CLOEXEC,
+            platform_lib::O_RDONLY | platform_lib::O_DIRECTORY | platform_lib::O_NOFOLLOW | platform_lib::O_CLOEXEC,
         )
     };
     if fd < 0 {
@@ -82,10 +74,7 @@ fn cleanup_root_owned_entries(root: &std::path::Path) -> Result<(), ServiceError
 }
 
 #[cfg(unix)]
-fn cleanup_directory_fd(
-    dirfd: std::os::fd::RawFd,
-    root_device: platform_lib::dev_t,
-) -> Result<(), ServiceError> {
+fn cleanup_directory_fd(dirfd: std::os::fd::RawFd, root_device: platform_lib::dev_t) -> Result<(), ServiceError> {
     let duplicate = unsafe { platform_lib::dup(dirfd) };
     if duplicate < 0 {
         return Err(cleanup_error(format!(
@@ -147,31 +136,19 @@ fn cleanup_entry_at(
     root_device: platform_lib::dev_t,
 ) -> Result<(), ServiceError> {
     let mut stat = unsafe { std::mem::zeroed::<platform_lib::stat>() };
-    if unsafe {
-        platform_lib::fstatat(
-            dirfd,
-            name.as_ptr(),
-            &mut stat,
-            platform_lib::AT_SYMLINK_NOFOLLOW,
-        )
-    } != 0
-    {
+    if unsafe { platform_lib::fstatat(dirfd, name.as_ptr(), &mut stat, platform_lib::AT_SYMLINK_NOFOLLOW) } != 0 {
         let error = std::io::Error::last_os_error();
         if error.kind() == std::io::ErrorKind::NotFound {
             return Ok(());
         }
-        return Err(cleanup_error(format!(
-            "failed to inspect legacy entry: {error}"
-        )));
+        return Err(cleanup_error(format!("failed to inspect legacy entry: {error}")));
     }
     if stat.st_dev != root_device {
         return Ok(());
     }
 
     let file_type = stat.st_mode & platform_lib::S_IFMT;
-    if stat.st_uid == 0
-        && (file_type == platform_lib::S_IFREG || file_type == platform_lib::S_IFLNK)
-    {
+    if stat.st_uid == 0 && (file_type == platform_lib::S_IFREG || file_type == platform_lib::S_IFLNK) {
         if unsafe { platform_lib::unlinkat(dirfd, name.as_ptr(), 0) } != 0 {
             return Err(cleanup_error(format!(
                 "failed to unlink root-owned legacy entry: {}",
@@ -184,10 +161,7 @@ fn cleanup_entry_at(
             platform_lib::openat(
                 dirfd,
                 name.as_ptr(),
-                platform_lib::O_RDONLY
-                    | platform_lib::O_DIRECTORY
-                    | platform_lib::O_NOFOLLOW
-                    | platform_lib::O_CLOEXEC,
+                platform_lib::O_RDONLY | platform_lib::O_DIRECTORY | platform_lib::O_NOFOLLOW | platform_lib::O_CLOEXEC,
             )
         };
         if child < 0 {
@@ -199,9 +173,7 @@ fn cleanup_entry_at(
         let result = cleanup_directory_fd(child, root_device);
         unsafe { platform_lib::close(child) };
         result?;
-        if stat.st_uid == 0
-            && unsafe { platform_lib::unlinkat(dirfd, name.as_ptr(), platform_lib::AT_REMOVEDIR) }
-                != 0
+        if stat.st_uid == 0 && unsafe { platform_lib::unlinkat(dirfd, name.as_ptr(), platform_lib::AT_REMOVEDIR) } != 0
         {
             let error = std::io::Error::last_os_error();
             if error.raw_os_error() != Some(platform_lib::ENOTEMPTY) {
@@ -229,8 +201,7 @@ mod tests {
     #[test]
     fn cleanup_does_not_remove_current_user_files_or_follow_symlinks() -> anyhow::Result<()> {
         let root = std::env::temp_dir().join(format!("legacy-cleanup-{}", std::process::id()));
-        let outside =
-            std::env::temp_dir().join(format!("legacy-cleanup-outside-{}", std::process::id()));
+        let outside = std::env::temp_dir().join(format!("legacy-cleanup-outside-{}", std::process::id()));
         std::fs::create_dir_all(&root)?;
         std::fs::write(root.join("user-file"), b"keep")?;
         std::fs::write(&outside, b"keep")?;

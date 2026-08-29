@@ -35,10 +35,7 @@ pub fn test_owner_credentials_for_uid(app_data_root: &Path, uid: u32) -> Result<
         uid,
         gid: unsafe { platform_lib::getegid() },
     };
-    let token = format!(
-        "{SYNTHETIC_TEST_OWNER_TOKEN_PREFIX}{}",
-        crate::owner_key(&identity)
-    );
+    let token = format!("{SYNTHETIC_TEST_OWNER_TOKEN_PREFIX}{}", crate::owner_key(&identity));
     Ok(OwnerCredentials {
         identity,
         app_data_dir: app_data_root.to_string_lossy().into_owned(),
@@ -55,13 +52,12 @@ mod windows {
     use std::path::Path;
     use windows_sys::Win32::Foundation::{CloseHandle, LocalFree};
     use windows_sys::Win32::Security::Authorization::{
-        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-        SDDL_REVISION_1,
+        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
     };
     use windows_sys::Win32::Security::{
         DACL_SECURITY_INFORMATION, GetTokenInformation, OWNER_SECURITY_INFORMATION,
-        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SetFileSecurityW, TOKEN_QUERY,
-        TOKEN_USER, TokenUser,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SetFileSecurityW, TOKEN_QUERY, TOKEN_USER,
+        TokenUser,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -90,20 +86,11 @@ mod windows {
         let mut required = 0_u32;
         unsafe { GetTokenInformation(token.0, TokenUser, std::ptr::null_mut(), 0, &mut required) };
         if required == 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("failed to size process SID buffer");
+            return Err(std::io::Error::last_os_error()).context("failed to size process SID buffer");
         }
         let words = (required as usize).div_ceil(std::mem::size_of::<usize>());
         let mut buffer = vec![0_usize; words];
-        if unsafe {
-            GetTokenInformation(
-                token.0,
-                TokenUser,
-                buffer.as_mut_ptr().cast(),
-                required,
-                &mut required,
-            )
-        } == 0
+        if unsafe { GetTokenInformation(token.0, TokenUser, buffer.as_mut_ptr().cast(), required, &mut required) } == 0
         {
             return Err(std::io::Error::last_os_error()).context("failed to read process SID");
         }
@@ -117,9 +104,7 @@ mod windows {
             return Err(std::io::Error::last_os_error()).context("failed to format process SID");
         }
         let value = LocalWideString(value);
-        let length = (0..)
-            .take_while(|index| unsafe { *value.0.add(*index) } != 0)
-            .count();
+        let length = (0..).take_while(|index| unsafe { *value.0.add(*index) } != 0).count();
         String::from_utf16(unsafe { std::slice::from_raw_parts(value.0, length) })
             .context("process SID is not valid UTF-16")
     }
@@ -180,8 +165,7 @@ mod windows {
             } == 0
                 || descriptor.is_null()
             {
-                return Err(std::io::Error::last_os_error())
-                    .context("failed to create test owner security descriptor");
+                return Err(std::io::Error::last_os_error()).context("failed to create test owner security descriptor");
             }
             Ok(Self(descriptor))
         }
@@ -191,9 +175,7 @@ mod windows {
             if unsafe {
                 SetFileSecurityW(
                     wide.as_ptr(),
-                    OWNER_SECURITY_INFORMATION
-                        | DACL_SECURITY_INFORMATION
-                        | PROTECTED_DACL_SECURITY_INFORMATION,
+                    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
                     self.0,
                 )
             } == 0

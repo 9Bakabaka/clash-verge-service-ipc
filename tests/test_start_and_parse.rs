@@ -4,8 +4,7 @@ mod common;
 
 use anyhow::{Context as _, Result};
 use clash_verge_service_ipc::{
-    PROTOCOL_EPOCH, PROTOCOL_REVISION, VERSION, get_status, get_version, run_ipc_server,
-    stop_ipc_server,
+    PROTOCOL_EPOCH, PROTOCOL_REVISION, VERSION, get_status, get_version, run_ipc_server, stop_ipc_server,
 };
 use serial_test::serial;
 
@@ -35,21 +34,13 @@ async fn running_server_reports_its_protocol_and_status() -> Result<()> {
     assert_eq!(version.build_version, VERSION);
     assert_eq!(version.protocol.epoch, PROTOCOL_EPOCH);
     assert_eq!(version.protocol.revision, PROTOCOL_REVISION);
-    assert!(
-        get_status(&common::owner_credentials())
-            .await?
-            .data
-            .is_some()
-    );
+    assert!(get_status(&common::owner_credentials()).await?.data.is_some());
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
         let socket = std::path::Path::new(clash_verge_service_ipc::IPC_PATH);
-        assert_eq!(
-            std::fs::metadata(socket)?.permissions().mode() & 0o777,
-            0o666
-        );
+        assert_eq!(std::fs::metadata(socket)?.permissions().mode() & 0o777, 0o666);
         assert_eq!(
             std::fs::metadata(socket.parent().context("IPC path has no parent")?)?
                 .permissions()

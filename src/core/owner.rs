@@ -34,10 +34,7 @@ impl Drop for ServiceOwnerGuard {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(self.paths.pid_file_path());
 
-        info!(
-            "Released service owner lock: {:?}",
-            self.paths.owner_lock_path()
-        );
+        info!("Released service owner lock: {:?}", self.paths.owner_lock_path());
     }
 }
 
@@ -65,13 +62,10 @@ pub async fn acquire_service_owner() -> Result<Option<ServiceOwnerGuard>> {
         return Ok(None);
     }
 
-    let old_pid = old_pid.context(
-        "service owner lock is held but its PID is unavailable; refusing unsafe lock takeover",
-    )?;
+    let old_pid =
+        old_pid.context("service owner lock is held but its PID is unavailable; refusing unsafe lock takeover")?;
     if old_pid == std::process::id() {
-        return Err(anyhow!(
-            "current process already holds the service owner lock"
-        ));
+        return Err(anyhow!("current process already holds the service owner lock"));
     }
     warn!("Existing service owner is not reachable; stopping old owner before lock takeover");
     if is_process_alive(old_pid) {
@@ -86,10 +80,7 @@ pub async fn acquire_service_owner() -> Result<Option<ServiceOwnerGuard>> {
 
     for attempt in 1..=OWNER_REACQUIRE_ATTEMPTS {
         if let Some(guard) = try_acquire_owner_once(&paths)? {
-            info!(
-                "Acquired service owner lock after cleanup on attempt {}",
-                attempt
-            );
+            info!("Acquired service owner lock after cleanup on attempt {}", attempt);
             return Ok(Some(guard));
         }
 
@@ -114,12 +105,7 @@ fn try_acquire_owner_once(paths: &ServicePaths) -> Result<Option<ServiceOwnerGua
             .open(paths.owner_lock_path())
             .with_context(|| format!("failed to open owner lock {:?}", paths.owner_lock_path()))?;
 
-        let result = unsafe {
-            platform_lib::flock(
-                file.as_raw_fd(),
-                platform_lib::LOCK_EX | platform_lib::LOCK_NB,
-            )
-        };
+        let result = unsafe { platform_lib::flock(file.as_raw_fd(), platform_lib::LOCK_EX | platform_lib::LOCK_NB) };
 
         if result == 0 {
             return ServiceOwnerGuard::new(file, paths.clone()).map(Some);

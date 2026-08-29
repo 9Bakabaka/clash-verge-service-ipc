@@ -5,27 +5,25 @@ mod core;
 mod client;
 
 pub use channel::{
-    CHANNEL_IDENTITY, ChannelIdentity, MACOS_APP_BUNDLE_ID, MACOS_SERVICE_ID, SERVICE_DISPLAY_NAME,
-    SERVICE_SLUG, WINDOWS_SERVICE_NAME,
+    CHANNEL_IDENTITY, ChannelIdentity, MACOS_APP_BUNDLE_ID, MACOS_SERVICE_ID, SERVICE_DISPLAY_NAME, SERVICE_SLUG,
+    WINDOWS_SERVICE_NAME,
 };
 pub use core::{
-    AuthenticatedRequest, AuthenticatedSessionRequest, ClashConfig, CoreConfig, IpcCommand,
-    MacosProxyConfig, OWNER_TOKEN_FILE_NAME, OwnerCredentials, OwnerIdentity, OwnerSessionHandle,
-    OwnerSessionProof, ProtocolInfo, ProtocolVersion, ProxyApplyOutcome, RemoteProvider,
-    RuntimeAsset, RuntimeBundle, SERVICE_PROTOCOL_HEADER, SESSION_TOKEN_HEX_LEN, ServiceErrorCode,
-    ServiceLifecycleState, ServiceStatusSnapshot, StageRejection, StageRuntimeOutcome,
-    StartClashRequest, StartClashResult, WriterConfig, mihomo_ipc_path, owner_key,
+    AuthenticatedRequest, AuthenticatedSessionRequest, ClashConfig, CoreConfig, IpcCommand, MacosProxyConfig,
+    OWNER_TOKEN_FILE_NAME, OwnerCredentials, OwnerIdentity, OwnerSessionHandle, OwnerSessionProof, ProtocolInfo,
+    ProtocolVersion, ProxyApplyOutcome, RemoteProvider, RuntimeAsset, RuntimeBundle, SERVICE_PROTOCOL_HEADER,
+    SESSION_TOKEN_HEX_LEN, ServiceErrorCode, ServiceLifecycleState, ServiceStatusSnapshot, StageRejection,
+    StageRuntimeOutcome, StartClashRequest, StartClashResult, WriterConfig, mihomo_ipc_path, owner_key,
 };
 pub use core::{OwnerPaths, ServicePaths, service_paths};
 
 #[cfg(feature = "standalone")]
 pub use core::{
-    ActiveOwnerState, DesiredState, REPAIR_IN_PROGRESS_EXIT_CODE, ServiceOwnerGuard,
-    ServiceRepairGate, acquire_service_owner, acquire_service_repair_gate,
-    cleanup_stale_owner_state, load_active_owner, load_owner_desired_state,
-    prepare_service_install_directory, reconcile_service_startup, restore_desired_state,
-    run_ipc_server, run_ipc_supervisor_until_shutdown, service_lifecycle_state,
-    set_service_lifecycle_state, stop_ipc_server,
+    ActiveOwnerState, DesiredState, REPAIR_IN_PROGRESS_EXIT_CODE, ServiceOwnerGuard, ServiceRepairGate,
+    acquire_service_owner, acquire_service_repair_gate, cleanup_stale_owner_state, load_active_owner,
+    load_owner_desired_state, prepare_service_install_directory, reconcile_service_startup, restore_desired_state,
+    run_ipc_server, run_ipc_supervisor_until_shutdown, service_lifecycle_state, set_service_lifecycle_state,
+    stop_ipc_server,
 };
 
 #[cfg(feature = "test")]
@@ -38,17 +36,9 @@ pub use core::{CoreWatchdogTestConfig, set_core_watchdog_config_for_tests};
 #[cfg(feature = "client")]
 pub use client::*;
 
-#[cfg(all(
-    target_os = "macos",
-    not(feature = "test"),
-    not(feature = "development-channel")
-))]
+#[cfg(all(target_os = "macos", not(feature = "test"), not(feature = "development-channel")))]
 pub static IPC_PATH: &str = "/var/run/clash-verge-service/service.sock";
-#[cfg(all(
-    target_os = "macos",
-    not(feature = "test"),
-    feature = "development-channel"
-))]
+#[cfg(all(target_os = "macos", not(feature = "test"), feature = "development-channel"))]
 pub static IPC_PATH: &str = "/var/run/clash-verge-service-dev/service.sock";
 #[cfg(all(
     unix,
@@ -75,7 +65,8 @@ pub static IPC_PATH: &str = "/tmp/clash-verge-service-ipc-test/service.sock";
 pub static IPC_PATH: &str = r"\\.\pipe\clash-verge-service-test";
 
 #[cfg(any(feature = "standalone", feature = "client"))]
-pub static IPC_AUTH_EXPECT: &str = r#"A thing of beauty is a joy for ever. Its loveliness increases; it will never pass into nothingness."#;
+pub static IPC_AUTH_EXPECT: &str =
+    r#"A thing of beauty is a joy for ever. Its loveliness increases; it will never pass into nothingness."#;
 
 pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const PROTOCOL_EPOCH: u16 = 2;

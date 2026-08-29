@@ -8,9 +8,7 @@ use anyhow::Result;
 pub async fn service_status_snapshot(owner: &AuthenticatedOwner) -> Result<ServiceStatusSnapshot> {
     let reported_service_state = service_lifecycle_state();
     let reported_core_state = core_lifecycle_state();
-    let desired = load_owner_desired_state(&owner.key)
-        .await
-        .unwrap_or_default();
+    let desired = load_owner_desired_state(&owner.key).await.unwrap_or_default();
     let active_owner = load_active_owner().await?;
     let active_generation = active_owner
         .as_ref()
@@ -38,9 +36,7 @@ pub async fn service_status_snapshot(owner: &AuthenticatedOwner) -> Result<Servi
         service_state,
         core_pid,
         core_started_at: core.as_ref().and_then(|core| core.core_started_at),
-        last_core_exit_reason: core
-            .as_ref()
-            .and_then(|core| core.last_core_exit_reason.clone()),
+        last_core_exit_reason: core.as_ref().and_then(|core| core.last_core_exit_reason.clone()),
         restart_count: core.as_ref().map_or(0, |core| core.restart_count),
         last_recovery_at: core.as_ref().and_then(|core| core.last_recovery_at),
         desired_core_should_be_running: desired.core_should_be_running,
@@ -58,18 +54,12 @@ fn effective_service_state(
 ) -> ServiceLifecycleState {
     if matches!(
         core_reported,
-        ServiceLifecycleState::Fatal
-            | ServiceLifecycleState::RecoveringCore
-            | ServiceLifecycleState::Starting
+        ServiceLifecycleState::Fatal | ServiceLifecycleState::RecoveringCore | ServiceLifecycleState::Starting
     ) && is_active
         && desired_running
     {
         core_reported
-    } else if reported != ServiceLifecycleState::Fatal
-        && is_active
-        && desired_running
-        && core_pid.is_none()
-    {
+    } else if reported != ServiceLifecycleState::Fatal && is_active && desired_running && core_pid.is_none() {
         ServiceLifecycleState::RecoveringCore
     } else {
         reported

@@ -19,13 +19,11 @@ pub(super) fn core_lifecycle_state() -> ServiceLifecycleState {
 }
 
 fn service_lifecycle_state_cell() -> &'static AtomicU8 {
-    static SERVICE_STATE: Lazy<AtomicU8> =
-        Lazy::new(|| AtomicU8::new(ServiceLifecycleState::Starting as u8));
+    static SERVICE_STATE: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(ServiceLifecycleState::Starting as u8));
     &SERVICE_STATE
 }
 
 fn core_lifecycle_state_cell() -> &'static AtomicU8 {
-    static CORE_STATE: Lazy<AtomicU8> =
-        Lazy::new(|| AtomicU8::new(ServiceLifecycleState::Running as u8));
+    static CORE_STATE: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(ServiceLifecycleState::Running as u8));
     &CORE_STATE
 }

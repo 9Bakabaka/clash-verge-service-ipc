@@ -3,8 +3,8 @@
 //! and asset metadata avoids hashing large unchanged files. Configuration is committed last.
 
 use super::assets::{
-    destination_key, invalid_asset, resolve_in_generation, runtime_cleanup_retry_delay,
-    validate_core_path, validate_destination,
+    destination_key, invalid_asset, resolve_in_generation, runtime_cleanup_retry_delay, validate_core_path,
+    validate_destination,
 };
 use crate::core::auth::{AuthenticatedOwner, ServiceError};
 use crate::core::manager::CORE_MANAGER;
@@ -70,11 +70,7 @@ pub(super) struct AssetSource {
 }
 
 /// Builds a pure staging plan from pre-read metadata.
-pub(super) fn plan_stage(
-    previous: &RuntimeManifest,
-    sources: &[AssetSource],
-    remote: &[RemoteProvider],
-) -> StagePlan {
+pub(super) fn plan_stage(previous: &RuntimeManifest, sources: &[AssetSource], remote: &[RemoteProvider]) -> StagePlan {
     let mut plan = StagePlan::default();
 
     for source in sources {
@@ -110,14 +106,8 @@ pub(super) fn plan_stage(
             .insert(provider.destination.clone(), provider.url.clone());
     }
 
-    for recorded in previous
-        .assets
-        .keys()
-        .chain(previous.remote_providers.keys())
-    {
-        if !plan.manifest.assets.contains_key(recorded)
-            && !plan.manifest.remote_providers.contains_key(recorded)
-        {
+    for recorded in previous.assets.keys().chain(previous.remote_providers.keys()) {
+        if !plan.manifest.assets.contains_key(recorded) && !plan.manifest.remote_providers.contains_key(recorded) {
             plan.hygiene_deletes.push(recorded.clone());
         }
     }
@@ -210,10 +200,7 @@ pub(crate) async fn stage_runtime(
         if let Err(error) = copy_staged_file(&copy.source, &target).await {
             return Ok(StageRuntimeOutcome::RestartRequired {
                 reason: StageRejection::RuntimeUnwritable {
-                    detail: format!(
-                        "failed to refresh the runtime asset {}: {error}",
-                        copy.destination
-                    ),
+                    detail: format!("failed to refresh the runtime asset {}: {error}", copy.destination),
                 },
             });
         }
@@ -221,10 +208,7 @@ pub(crate) async fn stage_runtime(
         if source_identity_changed(&copy.source, &copy.identity).await {
             return Ok(StageRuntimeOutcome::RestartRequired {
                 reason: StageRejection::RuntimeUnwritable {
-                    detail: format!(
-                        "runtime asset {} changed while it was being copied",
-                        copy.destination
-                    ),
+                    detail: format!("runtime asset {} changed while it was being copied", copy.destination),
                 },
             });
         }
@@ -246,9 +230,7 @@ pub(crate) async fn stage_runtime(
     }
 
     let config_path = PathBuf::from(&running.core_config.config_path);
-    if let Err(error) =
-        commit_staged_config(&generation, &config_path, &bundle.yaml, &plan.manifest).await
-    {
+    if let Err(error) = commit_staged_config(&generation, &config_path, &bundle.yaml, &plan.manifest).await {
         // A failed config commit leaves the newly written manifest untrusted; discard it.
         if let Err(discard) = remove_staged_file(&generation.join(MANIFEST_FILE_NAME)).await {
             tracing::warn!(
@@ -304,9 +286,7 @@ pub(super) fn modified_nanos(metadata: &std::fs::Metadata) -> Option<u128> {
 /// Returns true when source metadata changed or can no longer be read.
 pub(super) async fn source_identity_changed(source: &str, recorded: &SourceIdentity) -> bool {
     match tokio::fs::metadata(source).await {
-        Ok(metadata) => {
-            metadata.len() != recorded.len || modified_nanos(&metadata) != recorded.mtime_ns
-        }
+        Ok(metadata) => metadata.len() != recorded.len || modified_nanos(&metadata) != recorded.mtime_ns,
         Err(_) => true,
     }
 }
@@ -315,11 +295,10 @@ pub(super) async fn source_identity_changed(source: &str, recorded: &SourceIdent
 pub(super) async fn read_manifest(generation: &Path) -> Result<RuntimeManifest, String> {
     let path = generation.join(MANIFEST_FILE_NAME);
     match tokio::fs::read(&path).await {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|error| format!("runtime manifest {path:?} is unreadable: {error}")),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(RuntimeManifest::default())
+        Ok(bytes) => {
+            serde_json::from_slice(&bytes).map_err(|error| format!("runtime manifest {path:?} is unreadable: {error}"))
         }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(RuntimeManifest::default()),
         Err(error) => Err(format!("runtime manifest {path:?} cannot be read: {error}")),
     }
 }
@@ -357,8 +336,7 @@ pub(super) async fn remove_staged_file(path: &Path) -> std::io::Result<()> {
 
 /// Atomically replaces a destination and removes the temporary on failure.
 async fn replace_staged_file(staged: &Path, destination: &Path) -> std::io::Result<()> {
-    let result =
-        while_the_core_lets_go(|| crate::core::atomic_file::replace(staged, destination)).await;
+    let result = while_the_core_lets_go(|| crate::core::atomic_file::replace(staged, destination)).await;
     if result.is_err() {
         let _ = tokio::fs::remove_file(staged).await;
     }
@@ -385,8 +363,8 @@ pub(super) async fn commit_staged_config(
 ) -> std::io::Result<()> {
     // Record completed file changes first; the caller removes it if config commit fails.
     let manifest_path = generation.join(MANIFEST_FILE_NAME);
-    let encoded = serde_json::to_vec(manifest)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let encoded =
+        serde_json::to_vec(manifest).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     write_atomically(&manifest_path, &encoded).await?;
     write_atomically(config_path, yaml.as_bytes()).await
 }
@@ -412,10 +390,9 @@ pub(super) async fn write_atomically(destination: &Path, contents: &[u8]) -> std
 /// Creates a collision-resistant name that bundle destinations are forbidden to claim.
 fn staging_temp_path(destination: &Path) -> PathBuf {
     let sequence = STAGING_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let name = destination.file_name().map_or_else(
-        || "staged".to_owned(),
-        |name| name.to_string_lossy().into_owned(),
-    );
+    let name = destination
+        .file_name()
+        .map_or_else(|| "staged".to_owned(), |name| name.to_string_lossy().into_owned());
     destination.with_file_name(format!(".{name}.staging-{}-{sequence}", std::process::id()))
 }
 
@@ -453,10 +430,7 @@ mod tests {
 
     fn manifest(assets: &[(&str, SourceIdentity)], providers: &[(&str, &str)]) -> RuntimeManifest {
         RuntimeManifest {
-            assets: assets
-                .iter()
-                .map(|(k, v)| ((*k).to_owned(), v.clone()))
-                .collect(),
+            assets: assets.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect(),
             remote_providers: providers
                 .iter()
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
@@ -466,45 +440,20 @@ mod tests {
 
     #[test]
     fn an_asset_made_from_the_same_source_is_not_copied_again() {
-        let previous = manifest(
-            &[(
-                "geoip.metadb",
-                identity("/app/geoip.metadb", 60_000_000, 42),
-            )],
-            &[],
-        );
-        let sources = [asset_source(
-            "/app/geoip.metadb",
-            "geoip.metadb",
-            60_000_000,
-            42,
-        )];
+        let previous = manifest(&[("geoip.metadb", identity("/app/geoip.metadb", 60_000_000, 42))], &[]);
+        let sources = [asset_source("/app/geoip.metadb", "geoip.metadb", 60_000_000, 42)];
 
         let plan = plan_stage(&previous, &sources, &[]);
 
-        assert!(
-            plan.copies.is_empty(),
-            "unchanged geo data must not be re-copied"
-        );
+        assert!(plan.copies.is_empty(), "unchanged geo data must not be re-copied");
         assert_eq!(plan.skipped, ["geoip.metadb"]);
         assert!(plan.required_deletes.is_empty());
     }
 
     #[test]
     fn an_asset_whose_source_changed_is_copied() {
-        let previous = manifest(
-            &[(
-                "geoip.metadb",
-                identity("/app/geoip.metadb", 60_000_000, 42),
-            )],
-            &[],
-        );
-        let sources = [asset_source(
-            "/app/geoip.metadb",
-            "geoip.metadb",
-            61_000_000,
-            99,
-        )];
+        let previous = manifest(&[("geoip.metadb", identity("/app/geoip.metadb", 60_000_000, 42))], &[]);
+        let sources = [asset_source("/app/geoip.metadb", "geoip.metadb", 61_000_000, 99)];
 
         let plan = plan_stage(&previous, &sources, &[]);
 
@@ -516,10 +465,7 @@ mod tests {
     #[test]
     fn an_asset_copied_from_a_different_source_path_is_copied_again() {
         // Equal metadata cannot make a copy from another source valid.
-        let previous = manifest(
-            &[("providers/p.yaml", identity("/app/one.yaml", 128, 7))],
-            &[],
-        );
+        let previous = manifest(&[("providers/p.yaml", identity("/app/one.yaml", 128, 7))], &[]);
         let sources = [asset_source("/app/two.yaml", "providers/p.yaml", 128, 7)];
 
         let plan = plan_stage(&previous, &sources, &[]);
@@ -560,12 +506,7 @@ mod tests {
 
     #[test]
     fn without_a_manifest_nothing_is_skipped_and_every_cache_is_discarded() {
-        let sources = [asset_source(
-            "/app/geoip.metadb",
-            "geoip.metadb",
-            60_000_000,
-            42,
-        )];
+        let sources = [asset_source("/app/geoip.metadb", "geoip.metadb", 60_000_000, 42)];
 
         let plan = plan_stage(
             &RuntimeManifest::default(),
@@ -587,10 +528,7 @@ mod tests {
 
         let plan = plan_stage(&previous, &[], &[]);
 
-        assert_eq!(
-            plan.hygiene_deletes,
-            ["providers/gone.yaml", "rules/gone.yaml"]
-        );
+        assert_eq!(plan.hygiene_deletes, ["providers/gone.yaml", "rules/gone.yaml"]);
         assert!(
             plan.required_deletes.is_empty() && plan.copies.is_empty(),
             "housekeeping alone must not make staging look like it has work to do"
@@ -600,10 +538,7 @@ mod tests {
     #[test]
     fn a_file_the_service_never_wrote_is_never_a_deletion_candidate() {
         // Core-owned files such as `cache.db` never appear in the manifest.
-        let previous = manifest(
-            &[("geoip.metadb", identity("/app/geoip.metadb", 1, 1))],
-            &[],
-        );
+        let previous = manifest(&[("geoip.metadb", identity("/app/geoip.metadb", 1, 1))], &[]);
 
         let plan = plan_stage(&previous, &[], &[]);
 
@@ -654,8 +589,8 @@ mod tests {
         ];
         let previous = manifest(&[], &[("rules/ads.yaml", "https://one.example/ads.yaml")]);
 
-        let resolved = declared_remote_providers(&declared, &BTreeSet::new())
-            .expect("an identical repeat is not a conflict");
+        let resolved =
+            declared_remote_providers(&declared, &BTreeSet::new()).expect("an identical repeat is not a conflict");
         let plan = plan_stage(&previous, &[], &resolved);
 
         assert_eq!(resolved.len(), 1, "one destination yields one decision");

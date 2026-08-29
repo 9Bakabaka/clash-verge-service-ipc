@@ -1,7 +1,6 @@
 use crate::core::process::{process_identity, terminate_process_if_identity};
 use crate::core::runtime::{
-    cleanup_core_socket, is_core_socket_reachable, read_core_runtime_record,
-    remove_core_runtime_record,
+    cleanup_core_socket, is_core_socket_reachable, read_core_runtime_record, remove_core_runtime_record,
 };
 use anyhow::Result;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,10 +47,7 @@ pub async fn reconcile_service_startup() -> Result<()> {
         );
     }
     if !socket_reachable {
-        info!(
-            "Cleaning stale core socket from dead process: {}",
-            record.ipc_path
-        );
+        info!("Cleaning stale core socket from dead process: {}", record.ipc_path);
         cleanup_core_socket(&record.ipc_path).await;
     } else {
         warn!(

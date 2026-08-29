@@ -2,29 +2,26 @@ use anyhow::{Context as _, Result, bail};
 use std::os::windows::ffi::OsStrExt as _;
 use std::path::Path;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GetLastError,
-    INVALID_HANDLE_VALUE, LocalFree,
+    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GetLastError, INVALID_HANDLE_VALUE,
+    LocalFree,
 };
 #[cfg(not(feature = "test"))]
 use windows_sys::Win32::Security::Authorization::GetSecurityInfo;
 use windows_sys::Win32::Security::Authorization::{
-    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT,
-    SetSecurityInfo,
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT, SetSecurityInfo,
 };
 #[cfg(not(feature = "test"))]
 use windows_sys::Win32::Security::{
-    CreateWellKnownSid, EqualSid, OWNER_SECURITY_INFORMATION, SECURITY_MAX_SID_SIZE,
-    WinBuiltinAdministratorsSid, WinLocalSystemSid,
+    CreateWellKnownSid, EqualSid, OWNER_SECURITY_INFORMATION, SECURITY_MAX_SID_SIZE, WinBuiltinAdministratorsSid,
+    WinLocalSystemSid,
 };
 use windows_sys::Win32::Security::{
-    DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION,
-    SECURITY_ATTRIBUTES,
+    DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_DIRECTORY,
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TYPE_DISK,
-    GetFileInformationByHandle, GetFileType, OPEN_EXISTING, READ_CONTROL, WRITE_DAC, WRITE_OWNER,
+    BY_HANDLE_FILE_INFORMATION, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FILE_TYPE_DISK, GetFileInformationByHandle, GetFileType, OPEN_EXISTING, READ_CONTROL, WRITE_DAC, WRITE_OWNER,
 };
 
 #[cfg(not(feature = "test"))]
@@ -62,8 +59,7 @@ fn ensure_private_directory_with_recovery(
         lpSecurityDescriptor: descriptor.0,
         bInheritHandle: 0,
     };
-    if unsafe { CreateDirectoryW(wide.as_ptr(), &attributes) } == 0
-        && unsafe { GetLastError() } != ERROR_ALREADY_EXISTS
+    if unsafe { CreateDirectoryW(wide.as_ptr(), &attributes) } == 0 && unsafe { GetLastError() } != ERROR_ALREADY_EXISTS
     {
         return Err(std::io::Error::last_os_error())
             .with_context(|| format!("failed to create private service directory {path:?}"));
@@ -143,8 +139,7 @@ pub(crate) fn secure_private_service_file_if_exists(path: &Path) -> Result<()> {
     let handle = OwnedHandle(handle);
     let mut information = BY_HANDLE_FILE_INFORMATION::default();
     if unsafe { GetFileInformationByHandle(handle.0, &mut information) } == 0
-        || information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)
-            != 0
+        || information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) != 0
         || unsafe { GetFileType(handle.0) } != FILE_TYPE_DISK
     {
         bail!("service file {path:?} is not an ordinary file");
@@ -161,8 +156,7 @@ fn ensure_local_system_owner(handle: *mut std::ffi::c_void, path: &Path) -> Resu
     if unsafe { EqualSid(owner, system_sid.as_mut_ptr().cast()) } != 0 {
         return Ok(());
     }
-    let mut administrators_sid =
-        well_known_sid(WinBuiltinAdministratorsSid, "Builtin Administrators")?;
+    let mut administrators_sid = well_known_sid(WinBuiltinAdministratorsSid, "Builtin Administrators")?;
     if unsafe { EqualSid(owner, administrators_sid.as_mut_ptr().cast()) } == 0 {
         bail!(
             "service path {path:?} has an unexpected owner; only legacy Builtin Administrators ownership can be migrated"
@@ -182,9 +176,7 @@ fn ensure_local_system_owner(handle: *mut std::ffi::c_void, path: &Path) -> Resu
         )
     };
     if status != 0 {
-        bail!(
-            "failed to migrate service path {path:?} to LocalSystem ownership: Windows error {status}"
-        );
+        bail!("failed to migrate service path {path:?} to LocalSystem ownership: Windows error {status}");
     }
     Ok(())
 }
@@ -193,12 +185,9 @@ fn ensure_local_system_owner(handle: *mut std::ffi::c_void, path: &Path) -> Resu
 fn installer_owner_is_trusted(handle: *mut std::ffi::c_void) -> Result<bool> {
     let (owner, _security) = read_owner(handle)?;
     let mut system_sid = well_known_sid(WinLocalSystemSid, "LocalSystem")?;
-    let mut administrators_sid =
-        well_known_sid(WinBuiltinAdministratorsSid, "Builtin Administrators")?;
-    Ok(
-        unsafe { EqualSid(owner, system_sid.as_mut_ptr().cast()) } != 0
-            || unsafe { EqualSid(owner, administrators_sid.as_mut_ptr().cast()) } != 0,
-    )
+    let mut administrators_sid = well_known_sid(WinBuiltinAdministratorsSid, "Builtin Administrators")?;
+    Ok(unsafe { EqualSid(owner, system_sid.as_mut_ptr().cast()) } != 0
+        || unsafe { EqualSid(owner, administrators_sid.as_mut_ptr().cast()) } != 0)
 }
 
 #[cfg(not(feature = "test"))]
@@ -229,17 +218,8 @@ fn well_known_sid(kind: i32, label: &str) -> Result<Vec<usize>> {
     let words = (SECURITY_MAX_SID_SIZE as usize).div_ceil(std::mem::size_of::<usize>());
     let mut sid = vec![0_usize; words];
     let mut sid_size = SECURITY_MAX_SID_SIZE;
-    if unsafe {
-        CreateWellKnownSid(
-            kind,
-            std::ptr::null_mut(),
-            sid.as_mut_ptr().cast(),
-            &mut sid_size,
-        )
-    } == 0
-    {
-        return Err(std::io::Error::last_os_error())
-            .with_context(|| format!("failed to create {label} SID"));
+    if unsafe { CreateWellKnownSid(kind, std::ptr::null_mut(), sid.as_mut_ptr().cast(), &mut sid_size) } == 0 {
+        return Err(std::io::Error::last_os_error()).with_context(|| format!("failed to create {label} SID"));
     }
     Ok(sid)
 }
@@ -288,8 +268,7 @@ impl LocalDescriptor {
         let mut present = 0;
         let mut defaulted = 0;
         let mut dacl = std::ptr::null_mut();
-        if unsafe { GetSecurityDescriptorDacl(self.0, &mut present, &mut dacl, &mut defaulted) }
-            == 0
+        if unsafe { GetSecurityDescriptorDacl(self.0, &mut present, &mut dacl, &mut defaulted) } == 0
             || present == 0
             || dacl.is_null()
         {

@@ -55,16 +55,11 @@ struct OwnerGenerationState {
 }
 
 pub async fn load_owner_desired_state(owner_key: &str) -> Result<DesiredState> {
-    let path = service_paths()
-        .for_owner_key(owner_key)
-        .desired_state_path();
+    let path = service_paths().for_owner_key(owner_key).desired_state_path();
     Ok(read_owner_desired_state_resilient(&path).await)
 }
 
-pub async fn persist_owner_core_started(
-    owner: &AuthenticatedOwner,
-    config: &ClashConfig,
-) -> Result<DesiredState> {
+pub async fn persist_owner_core_started(owner: &AuthenticatedOwner, config: &ClashConfig) -> Result<DesiredState> {
     update_owner_desired_state(&owner.key, |state| {
         state.core_should_be_running = true;
         state.last_clash_config = Some(config.clone());
@@ -84,10 +79,7 @@ pub async fn persist_owner_core_stopped_by_key(owner_key: &str) -> Result<Desire
     .await
 }
 
-pub async fn persist_owner_writer_config(
-    owner: &AuthenticatedOwner,
-    config: &WriterConfig,
-) -> Result<DesiredState> {
+pub async fn persist_owner_writer_config(owner: &AuthenticatedOwner, config: &WriterConfig) -> Result<DesiredState> {
     update_owner_desired_state(&owner.key, |state| {
         state.last_writer_config = Some(config.clone());
         if let Some(clash_config) = state.last_clash_config.as_mut() {
@@ -117,10 +109,7 @@ pub async fn persist_active_owner(owner: &AuthenticatedOwner) -> Result<ActiveOw
     Ok(state)
 }
 
-pub async fn commit_active_owner_session(
-    owner: &AuthenticatedOwner,
-    session_token: &str,
-) -> Result<ActiveOwnerState> {
+pub async fn commit_active_owner_session(owner: &AuthenticatedOwner, session_token: &str) -> Result<ActiveOwnerState> {
     let session_token_hash = hash_session_token(session_token)?;
     let _guard = DESIRED_STATE_LOCK.lock().await;
     let paths = service_paths();
@@ -175,10 +164,7 @@ pub async fn restore_desired_state() -> Result<()> {
         return Ok(());
     };
 
-    info!(
-        "Restoring core from desired state generation {}",
-        state.generation
-    );
+    info!("Restoring core from desired state generation {}", state.generation);
     if let Err(error) = CORE_MANAGER
         .lock()
         .await
@@ -191,12 +177,8 @@ pub async fn restore_desired_state() -> Result<()> {
                 "Core binary not found while restoring desired state (stale/translocated path?); \
                  clearing desired core-run state to stop retrying: {error:#}"
             );
-            if let Err(clear_error) =
-                persist_owner_core_stopped_by_key(&active_owner.owner_key).await
-            {
-                warn!(
-                    "Failed to clear stale desired state after not-found core path: {clear_error:#}"
-                );
+            if let Err(clear_error) = persist_owner_core_stopped_by_key(&active_owner.owner_key).await {
+                warn!("Failed to clear stale desired state after not-found core path: {clear_error:#}");
             }
             set_core_lifecycle_state(ServiceLifecycleState::Running);
             return Ok(());
@@ -223,23 +205,15 @@ async fn backup_legacy_desired_states() {
         .into_iter()
         .chain([
             std::path::PathBuf::from("/var/lib/clash-verge-service/desired-state.json"),
-            std::path::PathBuf::from(
-                "/var/root/.local/state/clash-verge-service/desired-state.json",
-            ),
+            std::path::PathBuf::from("/var/root/.local/state/clash-verge-service/desired-state.json"),
         ])
         .collect::<Vec<_>>();
 
     for legacy in legacy_files {
         match backup_legacy_state_file(&legacy).await {
-            Ok(Some(backup)) => info!(
-                "Backed up legacy desired-state {:?} -> {:?}",
-                legacy, backup
-            ),
+            Ok(Some(backup)) => info!("Backed up legacy desired-state {:?} -> {:?}", legacy, backup),
             Ok(None) => {}
-            Err(error) => warn!(
-                "Failed to back up legacy desired-state {:?}: {}",
-                legacy, error
-            ),
+            Err(error) => warn!("Failed to back up legacy desired-state {:?}: {}", legacy, error),
         }
     }
 }
@@ -260,14 +234,9 @@ async fn backup_legacy_state_file(path: &std::path::Path) -> Result<Option<std::
     Ok(Some(backup))
 }
 
-async fn update_owner_desired_state(
-    owner_key: &str,
-    update: impl FnOnce(&mut DesiredState),
-) -> Result<DesiredState> {
+async fn update_owner_desired_state(owner_key: &str, update: impl FnOnce(&mut DesiredState)) -> Result<DesiredState> {
     let _guard = DESIRED_STATE_LOCK.lock().await;
-    let path = service_paths()
-        .for_owner_key(owner_key)
-        .desired_state_path();
+    let path = service_paths().for_owner_key(owner_key).desired_state_path();
     let mut state = read_owner_desired_state_resilient(&path).await;
     update(&mut state);
     state.generation = state.generation.saturating_add(1);
@@ -323,9 +292,7 @@ async fn read_owner_desired_state_resilient(path: &std::path::Path) -> DesiredSt
     }
 }
 
-async fn quarantine_corrupt_owner_desired_state(
-    path: &std::path::Path,
-) -> Result<std::path::PathBuf> {
+async fn quarantine_corrupt_owner_desired_state(path: &std::path::Path) -> Result<std::path::PathBuf> {
     let backup = sibling_state_path(path, "corrupt");
     tokio::fs::rename(path, &backup)
         .await
@@ -339,8 +306,7 @@ where
 {
     secure_state_file_if_exists(path)?;
     match tokio::fs::read(path).await {
-        Ok(content) => serde_json::from_slice(&content)
-            .with_context(|| format!("failed to parse state {path:?}")),
+        Ok(content) => serde_json::from_slice(&content).with_context(|| format!("failed to parse state {path:?}")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
         Err(error) => Err(error).with_context(|| format!("failed to read state {path:?}")),
     }
@@ -387,10 +353,7 @@ where
         && let Err(cleanup_error) = tokio::fs::remove_file(&temp_path).await
         && cleanup_error.kind() != std::io::ErrorKind::NotFound
     {
-        warn!(
-            "Failed to clean up state temp file {:?}: {}",
-            temp_path, cleanup_error
-        );
+        warn!("Failed to clean up state temp file {:?}: {}", temp_path, cleanup_error);
     }
     result
 }
@@ -423,9 +386,9 @@ fn unix_timestamp_secs() -> u64 {
 #[cfg(test)]
 mod owner_tests {
     use super::{
-        backup_legacy_state_file, clear_active_owner, commit_active_owner_session,
-        load_active_owner, load_owner_desired_state, persist_active_owner,
-        persist_owner_core_started, persist_owner_core_stopped, write_json_atomic,
+        backup_legacy_state_file, clear_active_owner, commit_active_owner_session, load_active_owner,
+        load_owner_desired_state, persist_active_owner, persist_owner_core_started, persist_owner_core_stopped,
+        write_json_atomic,
     };
     use crate::core::auth::AuthenticatedOwner;
     use crate::{ClashConfig, CoreConfig, OwnerIdentity};
@@ -454,16 +417,8 @@ mod owner_tests {
         persist_owner_core_started(&owner_a, &config).await?;
         persist_owner_core_stopped(&owner_b).await?;
 
-        assert!(
-            load_owner_desired_state(&owner_a.key)
-                .await?
-                .core_should_be_running
-        );
-        assert!(
-            !load_owner_desired_state(&owner_b.key)
-                .await?
-                .core_should_be_running
-        );
+        assert!(load_owner_desired_state(&owner_a.key).await?.core_should_be_running);
+        assert!(!load_owner_desired_state(&owner_b.key).await?.core_should_be_running);
         Ok(())
     }
 
@@ -531,9 +486,7 @@ mod owner_tests {
         });
         write_json_atomic(&crate::service_paths().active_owner_path(), &legacy_state).await?;
 
-        let active = load_active_owner()
-            .await?
-            .expect("legacy owner should load");
+        let active = load_active_owner().await?.expect("legacy owner should load");
 
         assert_eq!(active.generation, 0);
         assert!(active.session_token_hash.is_empty());
@@ -558,10 +511,7 @@ mod owner_tests {
     #[serial]
     async fn corrupt_owner_desired_state_is_quarantined_and_rebuilt() -> anyhow::Result<()> {
         let owner = test_owner(90_008);
-        let owner_root = crate::service_paths()
-            .for_owner_key(&owner.key)
-            .root()
-            .to_path_buf();
+        let owner_root = crate::service_paths().for_owner_key(&owner.key).root().to_path_buf();
         let _ = std::fs::remove_dir_all(&owner_root);
         std::fs::create_dir_all(&owner_root)?;
         let path = owner_root.join("desired-state.json");
@@ -571,11 +521,7 @@ mod owner_tests {
         let state = persist_owner_core_started(&owner, &ClashConfig::default()).await?;
 
         assert!(state.core_should_be_running);
-        assert!(
-            load_owner_desired_state(&owner.key)
-                .await?
-                .core_should_be_running
-        );
+        assert!(load_owner_desired_state(&owner.key).await?.core_should_be_running);
         let backups = std::fs::read_dir(&owner_root)?
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
@@ -595,10 +541,7 @@ mod owner_tests {
     #[serial]
     async fn corrupt_owner_desired_state_load_returns_safe_default() -> anyhow::Result<()> {
         let owner = test_owner(90_010);
-        let owner_root = crate::service_paths()
-            .for_owner_key(&owner.key)
-            .root()
-            .to_path_buf();
+        let owner_root = crate::service_paths().for_owner_key(&owner.key).root().to_path_buf();
         let _ = std::fs::remove_dir_all(&owner_root);
         std::fs::create_dir_all(&owner_root)?;
         let path = owner_root.join("desired-state.json");
@@ -626,13 +569,9 @@ mod owner_tests {
 
     #[tokio::test]
     #[serial]
-    async fn unavailable_owner_desired_state_does_not_reject_live_state_change()
-    -> anyhow::Result<()> {
+    async fn unavailable_owner_desired_state_does_not_reject_live_state_change() -> anyhow::Result<()> {
         let owner = test_owner(90_009);
-        let owner_root = crate::service_paths()
-            .for_owner_key(&owner.key)
-            .root()
-            .to_path_buf();
+        let owner_root = crate::service_paths().for_owner_key(&owner.key).root().to_path_buf();
         let _ = std::fs::remove_dir_all(&owner_root);
         std::fs::create_dir_all(owner_root.join("desired-state.json"))?;
 
@@ -646,10 +585,7 @@ mod owner_tests {
 
     #[tokio::test]
     async fn legacy_global_state_is_backed_up_without_becoming_owner_state() -> anyhow::Result<()> {
-        let root = std::env::temp_dir().join(format!(
-            "legacy-desired-state-backup-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("legacy-desired-state-backup-{}", std::process::id()));
         let legacy = root.join("desired-state.json");
         let backup = root.join("desired-state.json.legacy.bak");
         std::fs::create_dir_all(&root)?;
@@ -658,10 +594,7 @@ mod owner_tests {
         backup_legacy_state_file(&legacy).await?;
 
         assert!(!legacy.exists());
-        assert_eq!(
-            std::fs::read(&backup)?,
-            br#"{"core_should_be_running":true}"#
-        );
+        assert_eq!(std::fs::read(&backup)?, br#"{"core_should_be_running":true}"#);
         std::fs::remove_dir_all(root)?;
         Ok(())
     }

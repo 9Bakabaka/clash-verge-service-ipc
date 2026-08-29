@@ -4,9 +4,8 @@ mod common;
 
 use anyhow::{Context as _, Result};
 use clash_verge_service_ipc::{
-    IpcCommand, OwnerCredentials, OwnerSessionProof, RuntimeBundle, ServiceErrorCode,
-    StartClashRequest, StartClashResult, connect, get_status, run_ipc_server, start_clash,
-    stop_clash, stop_ipc_server,
+    IpcCommand, OwnerCredentials, OwnerSessionProof, RuntimeBundle, ServiceErrorCode, StartClashRequest,
+    StartClashResult, connect, get_status, run_ipc_server, start_clash, stop_clash, stop_ipc_server,
 };
 use serde::Deserialize;
 use serial_test::serial;
@@ -21,16 +20,11 @@ fn runtime_bundle() -> RuntimeBundle {
         yaml: "mode: rule\n".to_owned(),
         assets: Vec::new(),
         remote_providers: Vec::new(),
-        core_path: common::test_bin_path("mock_binary")
-            .to_string_lossy()
-            .into_owned(),
+        core_path: common::test_bin_path("mock_binary").to_string_lossy().into_owned(),
     }
 }
 
-async fn start(
-    credentials: &OwnerCredentials,
-    token: &str,
-) -> Result<(StartClashResult, OwnerSessionProof)> {
+async fn start(credentials: &OwnerCredentials, token: &str) -> Result<(StartClashResult, OwnerSessionProof)> {
     let response = start_clash(
         credentials,
         &StartClashRequest {
@@ -92,10 +86,7 @@ async fn restarting_an_owner_invalidates_the_previous_session() -> Result<()> {
         stop_clash(&credentials, &first_session).await?.code,
         ServiceErrorCode::StaleOwnerSession as u16
     );
-    let status = get_status(&credentials)
-        .await?
-        .data
-        .context("status omitted data")?;
+    let status = get_status(&credentials).await?.data.context("status omitted data")?;
     assert!(status.is_active);
     assert!(status.core_pid.is_some());
     assert_eq!(stop_clash(&credentials, &second_session).await?.code, 0);
@@ -121,20 +112,8 @@ async fn a_new_owner_takes_over_and_the_previous_owner_becomes_inactive() -> Res
     let (_, session_a) = start(&owner_a, &"33".repeat(32)).await?;
     let (_, session_b) = start(&owner_b, &"44".repeat(32)).await?;
 
-    assert!(
-        !get_status(&owner_a)
-            .await?
-            .data
-            .context("no status")?
-            .is_active
-    );
-    assert!(
-        get_status(&owner_b)
-            .await?
-            .data
-            .context("no status")?
-            .is_active
-    );
+    assert!(!get_status(&owner_a).await?.data.context("no status")?.is_active);
+    assert!(get_status(&owner_b).await?.data.context("no status")?.is_active);
     assert_eq!(
         stop_clash(&owner_a, &session_a).await?.code,
         ServiceErrorCode::StaleOwnerSession as u16

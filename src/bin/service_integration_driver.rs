@@ -4,8 +4,8 @@ use anyhow::Context as _;
 #[cfg(feature = "test")]
 use clash_verge_service_ipc::test_owner_credentials;
 use clash_verge_service_ipc::{
-    IpcConfig, MIN_REQUIRED_SERVICE_REVISION, OwnerSessionProof, ProtocolVersion, RuntimeBundle,
-    StartClashRequest, get_status, get_version, set_config, start_clash, stop_clash,
+    IpcConfig, MIN_REQUIRED_SERVICE_REVISION, OwnerSessionProof, ProtocolVersion, RuntimeBundle, StartClashRequest,
+    get_status, get_version, set_config, start_clash, stop_clash,
 };
 #[cfg(not(feature = "test"))]
 use clash_verge_service_ipc::{OwnerCredentials, OwnerIdentity};
@@ -51,9 +51,7 @@ async fn probe_protocol() -> anyhow::Result<()> {
         let info = response
             .data
             .ok_or_else(|| anyhow::anyhow!("service omitted protocol information"))?;
-        if response.code != 0
-            || !info.supports_client(ProtocolVersion::current(), MIN_REQUIRED_SERVICE_REVISION)
-        {
+        if response.code != 0 || !info.supports_client(ProtocolVersion::current(), MIN_REQUIRED_SERVICE_REVISION) {
             anyhow::bail!("service protocol is not compatible");
         }
         Ok(())
@@ -112,11 +110,7 @@ async fn start_flow() -> anyhow::Result<()> {
     )
     .await?;
     if response.code != 0 {
-        anyhow::bail!(
-            "service rejected Start: {} ({})",
-            response.message,
-            response.code
-        );
+        anyhow::bail!("service rejected Start: {} ({})", response.message, response.code);
     }
     let generation = response
         .data
@@ -130,18 +124,13 @@ async fn start_flow() -> anyhow::Result<()> {
 async fn stop_flow() -> anyhow::Result<()> {
     let response = stop_clash(&owner_credentials()?, &session_proof()?).await?;
     if response.code != 0 {
-        anyhow::bail!(
-            "service rejected Stop: {} ({})",
-            response.message,
-            response.code
-        );
+        anyhow::bail!("service rejected Stop: {} ({})", response.message, response.code);
     }
     Ok(())
 }
 
 fn session_token() -> anyhow::Result<String> {
-    std::env::var("CLASH_VERGE_TEST_SESSION_TOKEN")
-        .context("CLASH_VERGE_TEST_SESSION_TOKEN is required")
+    std::env::var("CLASH_VERGE_TEST_SESSION_TOKEN").context("CLASH_VERGE_TEST_SESSION_TOKEN is required")
 }
 
 fn session_proof() -> anyhow::Result<OwnerSessionProof> {

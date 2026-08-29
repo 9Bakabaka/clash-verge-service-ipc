@@ -61,10 +61,7 @@ fn windows_process_identity_details_from_handle(handle: &OwnedHandle) -> Result<
 
     let mut path = vec![0u16; 32_768];
     let mut path_len = path.len() as u32;
-    if unsafe {
-        QueryFullProcessImageNameW(handle.as_raw_handle(), 0, path.as_mut_ptr(), &mut path_len)
-    } == 0
-    {
+    if unsafe { QueryFullProcessImageNameW(handle.as_raw_handle(), 0, path.as_mut_ptr(), &mut path_len) } == 0 {
         return Err(std::io::Error::last_os_error().into());
     }
     path.truncate(path_len as usize);
@@ -76,23 +73,11 @@ fn windows_process_identity_details_from_handle(handle: &OwnedHandle) -> Result<
     let mut exit = FILETIME::default();
     let mut kernel = FILETIME::default();
     let mut user = FILETIME::default();
-    if unsafe {
-        GetProcessTimes(
-            handle.as_raw_handle(),
-            &mut creation,
-            &mut exit,
-            &mut kernel,
-            &mut user,
-        )
-    } == 0
-    {
+    if unsafe { GetProcessTimes(handle.as_raw_handle(), &mut creation, &mut exit, &mut kernel, &mut user) } == 0 {
         return Err(std::io::Error::last_os_error().into());
     }
     let started_at = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
-    Ok(ProcessIdentity {
-        executable,
-        started_at,
-    })
+    Ok(ProcessIdentity { executable, started_at })
 }
 
 pub(super) fn process_identity(pid: u32) -> Result<Option<ProcessIdentity>> {
@@ -128,10 +113,7 @@ pub(super) fn process_identity(pid: u32) -> Result<Option<ProcessIdentity>> {
         if confirmed_started_at != started_at {
             bail!("process {pid} changed while reading its identity");
         }
-        Ok(Some(ProcessIdentity {
-            executable,
-            started_at,
-        }))
+        Ok(Some(ProcessIdentity { executable, started_at }))
     }
 
     #[cfg(target_os = "macos")]
@@ -153,9 +135,7 @@ pub(super) fn process_identity(pid: u32) -> Result<Option<ProcessIdentity>> {
             return Ok(None);
         }
         let mut path = vec![0u8; platform_lib::PROC_PIDPATHINFO_MAXSIZE as usize];
-        let path_len = unsafe {
-            platform_lib::proc_pidpath(unix_pid, path.as_mut_ptr().cast(), path.len() as u32)
-        };
+        let path_len = unsafe { platform_lib::proc_pidpath(unix_pid, path.as_mut_ptr().cast(), path.len() as u32) };
         if path_len <= 0 {
             let error = std::io::Error::last_os_error();
             return if is_process_alive(pid) {
@@ -182,9 +162,7 @@ pub(super) fn process_identity(pid: u32) -> Result<Option<ProcessIdentity>> {
         if confirmed.pbi_status == platform_lib::SZOMB {
             return Ok(None);
         }
-        if (confirmed.pbi_start_tvsec, confirmed.pbi_start_tvusec)
-            != (info.pbi_start_tvsec, info.pbi_start_tvusec)
-        {
+        if (confirmed.pbi_start_tvsec, confirmed.pbi_start_tvusec) != (info.pbi_start_tvsec, info.pbi_start_tvusec) {
             bail!("process {pid} changed while reading its identity");
         }
         Ok(Some(ProcessIdentity {
@@ -222,8 +200,7 @@ pub(super) fn is_process_alive(pid: u32) -> bool {
             return false;
         };
         let result = unsafe { platform_lib::kill(unix_pid, 0) };
-        let exists = result == 0
-            || std::io::Error::last_os_error().raw_os_error() == Some(platform_lib::EPERM);
+        let exists = result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(platform_lib::EPERM);
         if !exists {
             return false;
         }
@@ -295,14 +272,10 @@ fn open_windows_process_handle(pid: u32) -> Result<Option<OwnedHandle>> {
     }
 }
 
-async fn terminate_process_inner(
-    pid: u32,
-    expected_identity: Option<&ProcessIdentity>,
-) -> Result<()> {
+async fn terminate_process_inner(pid: u32, expected_identity: Option<&ProcessIdentity>) -> Result<()> {
     #[cfg(unix)]
     {
-        let unix_pid = checked_unix_pid(pid)
-            .ok_or_else(|| anyhow::anyhow!("invalid Unix process ID {pid}"))?;
+        let unix_pid = checked_unix_pid(pid).ok_or_else(|| anyhow::anyhow!("invalid Unix process ID {pid}"))?;
         let termination_identity = if let Some(expected_identity) = expected_identity {
             let Some(current_identity) = process_identity(pid)? else {
                 return Ok(());
@@ -386,10 +359,7 @@ pub(super) async fn terminate_process(pid: u32) -> Result<()> {
     terminate_process_inner(pid, None).await
 }
 
-pub(super) async fn terminate_process_if_identity(
-    pid: u32,
-    expected_identity: &ProcessIdentity,
-) -> Result<()> {
+pub(super) async fn terminate_process_if_identity(pid: u32, expected_identity: &ProcessIdentity) -> Result<()> {
     terminate_process_inner(pid, Some(expected_identity)).await
 }
 
@@ -406,10 +376,7 @@ mod tests {
             let output = Command::new("ps")
                 .args(["-o", "stat=", "-p", &pid.to_string()])
                 .output()?;
-            Ok(output.status.success()
-                && !String::from_utf8_lossy(&output.stdout)
-                    .trim_start()
-                    .starts_with('Z'))
+            Ok(output.status.success() && !String::from_utf8_lossy(&output.stdout).trim_start().starts_with('Z'))
         }
 
         #[cfg(windows)]
@@ -418,8 +385,7 @@ mod tests {
             let output = Command::new("tasklist")
                 .args(["/FI", &filter, "/FO", "CSV", "/NH"])
                 .output()?;
-            Ok(output.status.success()
-                && String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
+            Ok(output.status.success() && String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
         }
     }
 

@@ -22,12 +22,9 @@ pub(super) async fn write_core_runtime_record(record: &CoreRuntimeRecord) -> Res
     let destination = paths.core_runtime_path();
     let temporary = destination.with_extension("json.tmp");
     let json = serde_json::to_vec_pretty(record)?;
-    let mut file = tokio::fs::File::create(&temporary).await.with_context(|| {
-        format!(
-            "failed to create temporary core runtime record {:?}",
-            temporary
-        )
-    })?;
+    let mut file = tokio::fs::File::create(&temporary)
+        .await
+        .with_context(|| format!("failed to create temporary core runtime record {:?}", temporary))?;
     tokio::io::AsyncWriteExt::write_all(&mut file, &json).await?;
     tokio::io::AsyncWriteExt::flush(&mut file).await?;
     file.sync_all().await?;
@@ -49,21 +46,14 @@ pub(super) async fn read_core_runtime_record() -> Result<Option<CoreRuntimeRecor
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(error).with_context(|| {
-                format!(
-                    "failed to read core runtime record {:?}",
-                    paths.core_runtime_path()
-                )
-            });
+            return Err(error)
+                .with_context(|| format!("failed to read core runtime record {:?}", paths.core_runtime_path()));
         }
     };
 
-    serde_json::from_slice(&content).map(Some).with_context(|| {
-        format!(
-            "invalid core runtime record {:?}",
-            paths.core_runtime_path()
-        )
-    })
+    serde_json::from_slice(&content)
+        .map(Some)
+        .with_context(|| format!("invalid core runtime record {:?}", paths.core_runtime_path()))
 }
 
 pub(super) async fn remove_core_runtime_record() {
@@ -74,12 +64,9 @@ pub(super) async fn remove_core_runtime_record() {
 pub(super) async fn is_core_socket_reachable(path: &str) -> bool {
     #[cfg(unix)]
     {
-        tokio::time::timeout(
-            Duration::from_millis(300),
-            tokio::net::UnixStream::connect(path),
-        )
-        .await
-        .is_ok_and(|result| result.is_ok())
+        tokio::time::timeout(Duration::from_millis(300), tokio::net::UnixStream::connect(path))
+            .await
+            .is_ok_and(|result| result.is_ok())
     }
 
     #[cfg(windows)]

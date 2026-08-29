@@ -23,10 +23,7 @@ pub(crate) fn ensure_service_directory(path: &Path, mode: platform_lib::mode_t) 
     let fd = unsafe {
         platform_lib::open(
             path_c.as_ptr(),
-            platform_lib::O_RDONLY
-                | platform_lib::O_DIRECTORY
-                | platform_lib::O_NOFOLLOW
-                | platform_lib::O_CLOEXEC,
+            platform_lib::O_RDONLY | platform_lib::O_DIRECTORY | platform_lib::O_NOFOLLOW | platform_lib::O_CLOEXEC,
         )
     };
     if fd < 0 {
@@ -77,11 +74,7 @@ pub(crate) fn secure_private_service_file_if_exists(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn secure_open_directory(
-    fd: std::os::fd::RawFd,
-    path: &Path,
-    mode: platform_lib::mode_t,
-) -> Result<()> {
+fn secure_open_directory(fd: std::os::fd::RawFd, path: &Path, mode: platform_lib::mode_t) -> Result<()> {
     let mut stat = unsafe { std::mem::zeroed::<platform_lib::stat>() };
     if unsafe { platform_lib::fstat(fd, &mut stat) } != 0 {
         return Err(std::io::Error::last_os_error())
