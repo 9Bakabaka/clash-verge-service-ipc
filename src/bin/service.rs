@@ -62,8 +62,8 @@ fn run_service() -> platform_lib::Result<()> {
 
     let event_handler = move |control_event| -> ServiceControlHandlerResult {
         match control_event {
-            ServiceControl::Stop => {
-                let _ = shutdown_tx.blocking_send(());
+            ServiceControl::Stop | ServiceControl::Shutdown => {
+                let _ = shutdown_tx.try_send(());
                 ServiceControlHandlerResult::NoError
             }
             ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
@@ -77,7 +77,7 @@ fn run_service() -> platform_lib::Result<()> {
     status_handle.set_service_status(ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
         current_state: ServiceState::Running,
-        controls_accepted: ServiceControlAccept::STOP,
+        controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
         exit_code: ServiceExitCode::Win32(0),
         checkpoint: 0,
         wait_hint: Duration::default(),
@@ -198,7 +198,20 @@ async fn shutdown_signal() {
 
     #[cfg(windows)]
     {
-        tokio::signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
-        info!("Received Ctrl+C");
+        use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close, ctrl_logoff, ctrl_shutdown};
+
+        let mut ctrl_c = ctrl_c().expect("Failed to install Ctrl+C handler");
+        let mut ctrl_break = ctrl_break().expect("Failed to install Ctrl+Break handler");
+        let mut ctrl_close = ctrl_close().expect("Failed to install Ctrl+Close handler");
+        let mut ctrl_logoff = ctrl_logoff().expect("Failed to install Ctrl+Logoff handler");
+        let mut ctrl_shutdown = ctrl_shutdown().expect("Failed to install Ctrl+Shutdown handler");
+
+        tokio::select! {
+            _ = ctrl_c.recv() => info!("Received Ctrl+C"),
+            _ = ctrl_break.recv() => info!("Received Ctrl+Break"),
+            _ = ctrl_close.recv() => info!("Received console close"),
+            _ = ctrl_logoff.recv() => info!("Received logoff"),
+            _ = ctrl_shutdown.recv() => info!("Received system shutdown"),
+        }
     }
 }
